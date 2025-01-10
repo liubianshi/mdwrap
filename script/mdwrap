@@ -1,0 +1,17 @@
+#!/use/bin/perl
+
+use strict;
+use warnings;
+use Getopt::Long;
+use App::Markdown::Wrap;
+
+my %default_opts = (
+  "line-width" => 80,
+  "tonewsboat" => 0,
+);
+
+my %opts;
+GetOptions( \%opts, "line-width|w=i", "tonewsboat", );
+
+App::Markdown::Wrap->run( { %default_opts, %opts }, @ARGV );
+
