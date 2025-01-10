@@ -13,7 +13,7 @@ sub new {
     type => ( shift() or "normal" ),
     attr => {
       wrap           => 1,
-      add_empty_line => 1,
+      add_empty_line => 0,
       marker         => "",
       empty          => 1,
     }

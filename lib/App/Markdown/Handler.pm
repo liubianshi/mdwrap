@@ -1,8 +1,9 @@
-package App::Markdown::Hander;
+package App::Markdown::Handler;
 
 use v5.30;
 use strict;
 use warnings;
+use Data::Dump           qw(dump);
 use List::Util           qw(any);
 use App::Markdown::Utils qw(
   is_header_line
@@ -17,15 +18,16 @@ sub new {
   my $class = shift;
   my $args  = shift;
   my $self  = {
-    content    => ( shift or [] ),
-    block      => App::Markdown::Block->new(),
-    title      => undef,
-    url        => undef,
-    date       => undef,
-    source     => undef,
-    seperator  => "┄",
-    line_width => 80,
-    images     => [],
+    content      => ( shift or [] ),
+    block        => App::Markdown::Block->new(),
+    title        => undef,
+    url          => undef,
+    date         => undef,
+    source       => undef,
+    tonewsboat   => 0,
+    seperator    => "┄",
+    'line-width' => 80,
+    images       => [],
   };
   for ( keys %$self ) {
     if ( defined $args->{$_} ) {
@@ -39,20 +41,23 @@ sub new {
 sub upload {
   my ( $self, $attr ) = @_;
   my $block = $self->{block};
-  $block->update( { attr => $attr } );
-  push @{ $self->content }, $self->{block};
+  $block->update( { attr => $attr // {} } );
+  push @{ $self->{content} }, $self->{block};
   $self->{block} = App::Markdown::Block->new();
 }
 
 sub get_content {
-  my $self = shift;
-  return $self->{content};
+  my $self         = shift;
+  my $pos          = shift;
+  my $contents_ref = $self->{content};
+  return $contents_ref unless defined $pos;
+  return $contents_ref->[$pos];
 }
 
 sub block_is_empty {
   my $self  = shift;
   my $block = $self->{block};
-  $block->get_text() eq "";
+  $block->get("text") eq "";
 }
 
 # YAML header
@@ -71,7 +76,7 @@ sub yaml_header {
   $block->extend($line);
   if ($match_yaml_symbol) {
     if ( $btype eq "yaml" ) {
-      $self->upload();
+      $self->upload( { add_empty_line => 1 } );
     }
     else {
       $block->update( { type => "yaml", attr => { wrap => 0 } } );
@@ -89,14 +94,21 @@ sub normal_line {
 
   # 保留特意插入的空行
   if ( $line !~ m/\S/ ) {
-    $block->update( { attr => { wrap => 1, add_empty_line => 1, } } );
-    $self->upload();
+    if ( $self->block_is_empty() ) {
+      my $last_block = $self->get_content(-1);
+      if ( not $last_block->get("add_empty_line") ) {
+        $self->{block}->extend("\n");
+        $self->upload();
+      }
+    }
+    else {
+      $self->upload( { add_empty_line => 1 } );
+    }
     return;
   }
 
-  $self->{block}{extend}($line);
-  return 1 if $block->get("type") ne "normal";
-  return;
+  $self->{block}->extend($line);
+  return 1;
 }
 
 # Pandoc div: :::
@@ -104,7 +116,7 @@ sub pandoc_div {
   my ( $self, $line ) = @_;
   if ( $line =~ m/^[:]{3, }/ ) {
     $self->upload() unless $self->block_is_empty();
-    $self->{block}{update}( { text => $line } );
+    $self->{block}->extend($line);
     $self->upload();
     return 1;
   }
@@ -168,7 +180,7 @@ sub code_block {
     and $1 eq $bmarker )
   {
     if ( $block->get("empty") ) {
-      $block->init();
+      $block->upload();
       return 1;
     }
 
@@ -177,7 +189,7 @@ sub code_block {
     $block_text =~ s/\A(\s*[`~]{3,}[^\n]*\n)(?:\s*\n)+/$1/;
     $block_text =~ s/(?:\n\s*)+(\n[`~]{3,}\s*\n+)\z/$1/;
     $block->update( { text => $block_text } );
-    $self->upload();
+    $self->upload( { add_emptry_line => 1 } );
 
     return 1;
   }
@@ -194,15 +206,11 @@ sub code_block {
         }
       );
     }
-    if ( $block->get("empty")
-      and ( $line !~ m/\S/ or $line =~ m/^\s*\d+[.]?\s*$/ ) )
-    {
-      $block->extend($line);
-      $block->update( { attr => { empty => 1 } } );
+    $block->extend($line);
+    if ( $block->get("empty") and ( $line !~ m/\S/ or $line =~ m/^\s*\d+[.]?\s*$/ ) ) {
+      $block->update( { attr => { empty => 1 } } );    # extend 时，会自动工薪 empty 属性，因此需要复位
     }
-    else {
-      $block->extend($line);
-    }
+
     return 1;
   }
 
@@ -214,9 +222,10 @@ sub code_block {
         text => $line,
         type => "code",
         attr => {
-          marker => $1,
-          wrap   => 0,
-          empty  => 1
+          marker         => $1,
+          wrap           => 0,
+          empty          => 1,
+          add_empty_line => 1,
         }
       }
     );
@@ -240,7 +249,7 @@ sub pandoc_table_simple {
 
   # end: empty line
   if ( $tblock eq "table" and $mblock eq "oneline" and $empty_line ) {
-    $self->upload();
+    $self->upload( { add_empty_line => 1 } );
     return 1;
   }
 
@@ -251,16 +260,19 @@ sub pandoc_table_simple {
   }
 
   # start
-  if (  $line =~ m/^\s* [|]? \s* [:]? \s* [-]{3,} [:|\s-]* $/mxs
-    and not $self->block_is_empty()
-    and $tblock eq "normal" )
+  if (
+    $line =~ m/^\s* [|]? \s* [:]? \s* [-]{3,} [:|\s-]* $/mxs
+    and not $self->block_is_empty()    # 和 headless table 的区别所在
+    and $tblock eq "normal"
+    )
   {
     $block->update(
       {
         type => "table",
         attr => {
-          marker => "oneline",
-          wrap   => 0,
+          marker         => "oneline",
+          wrap           => 0,
+          add_empty_line => 1,
         }
       }
     );
@@ -288,8 +300,9 @@ sub pandoc_table_other {
         text => $line,
         type => "table",
         attr => {
-          marker => "pandoc-start",
-          wrap   => 0,
+          marker         => "pandoc-start",
+          wrap           => 0,
+          add_empty_line => 1,
         }
       }
     );
@@ -298,7 +311,7 @@ sub pandoc_table_other {
 
   # end: empty line after special seperator line
   if ( $tblock eq "table" and $mblock eq "pandoc-sep" and $empty_line ) {
-    $self->upload();
+    $self->upload( { add_empty_line => 1 } );
     return 1;
   }
 
@@ -325,8 +338,8 @@ sub simple_table_line {
   my ( $self, $line ) = @_;
   if ( is_table_line($line) ) {
     $self->upload() unless $self->block_is_empty();
-    $self->{block}{extend}($line);
-    $self->upload();
+    $self->{block}->extend($line);
+    $self->upload( { wrap => 0, add_empty_line => 0 } );
     return 1;
   }
   return;
@@ -354,7 +367,7 @@ sub header_setext {
       $block->extend($line);
     }
     else {
-      $self->upload();
+      $self->upload( { add_empty_line => 1, wrap => 0 } );
     }
     return 1;
   }
@@ -367,7 +380,7 @@ sub header_setext {
     $block->update(
       {
         type => 'header',
-        attr => { marker => "setext", wrap => 0 }
+        attr => { marker => "setext", wrap => 0, add_empty_line => 1 },
       }
     );
     $block->extend($line);
@@ -405,12 +418,12 @@ sub header_atx {
 # Table rows and comment lines are output as is
 sub comment_line_as_sep {
   my ( $self, $line ) = @_;
-  if (  $self->{block}{get}("type") eq "normal"
+  if (  $self->{block}->get("type") eq "normal"
     and $line =~ m/^\s* (?:\<!\-\-.*\-\-\>) \s*$/mxs )
   {
     $self->upload() unless $self->block_is_empty();
-    $self->{block}{extend}("$line");
-    $self->upload();
+    $self->{block}->extend("$line");
+    $self->upload( { wrap => 0, add_empty_line => 0 } );
     return 1;
   }
   return;
@@ -470,9 +483,9 @@ sub tonewsboat_separator {
   if ( $self->block_is_empty()
     and m{ ^ (\s*) \* (?:\s\*){2,} \s* $}xms )
   {
-    $self->{block}{update}(
+    $self->{block}->update(
       {
-        text => "\n" . ( $self->{seperator} x $self->{linw_width} ) . "\n"
+        text => "\n" . ( $self->{seperator} x $self->{"line-width"} ) . "\n"
       }
     );
     $self->upload();
@@ -493,14 +506,14 @@ sub tonewsboat_links_list {
   }
   $line =~ s/^\s*//mxs;
   $line = "Links:\n$line" if $link_id == 1;
-  $self->{block}{update}(
+  $self->{block}->update(
     type => "image",
     attr => {
       wrap           => 0,
       add_empty_line => 0,
     }
   );
-  $self->{block}{extend}($line);
+  $self->{block}->extend($line);
   $self->upload();
   return 1;
 }
@@ -557,27 +570,29 @@ sub quote {
 
     ## End of previous paragraph and start of new paragraph
     if ( $line_without_quote_symbol !~ m/\S/ ) {
-      $self->upload();
-      $self->{block}{update}(
+      $self->upload( { add_empty_line => 0 } );
+      $self->{block}->update(
         {
           type => "quote",
           attr => { marker => $mblock, add_empty_line => 0 },
         }
       );
-      $self->{block}{extend}( substr( $line, 0, $indent_num ) =~ s/\n*$/\n/mxsr );
+      $self->{block}->extend( substr( $line, 0, $indent_num ) =~ s/\n*$/\n/mxsr );
     }
     elsif ( $quote_level == $mblock ) {
-      return 1 if $self->line_can_sep_paragraph( $line_without_quote_symbol, substr( $line, 0, $indent_num ) );
+      return 1
+        if $self->line_can_sep_paragraph( $line_without_quote_symbol, substr( $line, 0, $indent_num ) );    # 引用里嵌套列表或引用
       $block->extend( substr( $line, 0, $indent_num ) ) if $self->block_is_empty();
       $block->extend($line_without_quote_symbol);
     }
     else {
-      $self->upload();
-      $self->{block}{update}(
+      $self->upload( { add_empty_line => 0 } );
+      $self->{block}->update(
         {
           text => $line,
           type => "quote",
           attr => {
+            wrap           => 1,
             marker         => $quote_level,
             add_empty_line => 0,
             empty          => 0,
@@ -595,7 +610,7 @@ sub quote {
 
     # callout title need in seperate line
     if ( $line =~ m/\A \s* (\>+)  \s+ \[ \! [^\]\s]+ \] /xms ) {
-      $self->{block}{update}(
+      $self->{block}->update(
         {
           text => $line,
           type => "callout",
@@ -609,14 +624,14 @@ sub quote {
       $self->upload();
       $line = "";
     }
-    $self->{block}{update}(
+    $self->{block}->update(
       {
         text => $line,
         type => "quote",
         attr => {
           marker         => $quote_level,
           add_empty_line => 0,
-          empty          => $line eq "",
+          empty          => 0,
         }
       }
     );
@@ -637,7 +652,7 @@ sub line_can_sep_paragraph {
     $line = $prefix . $line;
     $line =~ s{ ^ (\s*) [-*+] \s}{$1 • }xms if $self->{tonewsboat};
     $self->upload() unless $self->block_is_empty();
-    $self->{block}{extend}($line);
+    $self->{block}->extend($line);
     return 1;
   }
 

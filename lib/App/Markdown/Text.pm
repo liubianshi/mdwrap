@@ -266,7 +266,7 @@ OUTER:
       # 下一个字符为英文字符时，需要引入额外的空格，导致前面的计算不准
       if (  $with_enough_room == 1
         and $line->{str} !~ m/\s$/
-        and $word->{strl} eq ""
+        and $word->{str} eq ""
         and $char_attr eq "OTHER" )
       {
         push @lines, $line->{str};

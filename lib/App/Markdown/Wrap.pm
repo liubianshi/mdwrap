@@ -6,12 +6,8 @@ use warnings;
 use Data::Dump qw(dump);
 use utf8;
 use open ':std', ':encoding(UTF-8)';
-use List::Util           qw(any none);
-use App::Markdown::Text  qw(set_environemnt_variable);
-use App::Markdown::Block qw(
-  upload_block_to_contents
-  block_extend
-);
+use List::Util          qw(any none);
+use App::Markdown::Text qw(set_environemnt_variable);
 use App::Markdown::Handler;
 
 sub run {
@@ -37,7 +33,7 @@ sub run {
     next if $handler->math($_);
 
     # 代码块中的内容不折叠
-    if ( $opt->{tonewsboat} ) {
+    if ( $opt{tonewsboat} ) {
       s{^[ ]*\[/?code\][ ]*$}{```};
       s/^[ ]*([|]|[-]+[|][-]+)[ ]*$//;
       s/^[ ]+$//;
@@ -60,7 +56,7 @@ sub run {
     next if $handler->comment_line_as_sep($_);
 
     # newsboat
-    if ( $opt->{tonewsboat} ) {
+    if ( $opt{tonewsboat} ) {
       next if $handler->tonewsboat_fetch_meta_info($_);
       next if $handler->tonewsboat_separator($_);
       next if $handler->tonewsboat_links_list($_);
@@ -71,14 +67,18 @@ sub run {
     next if $handler->quote($_);
     next if $handler->line_can_sep_paragraph($_);
 
-    next if handle_normal_line($_);
+    next if $handler->normal_line($_);
   }
 
   $handler->upload() unless $handler->block_is_empty();
 
-  my @contents = map { $_->tostring() } %{ $handler->get_content() };
+  my @contents = map { $_->tostring() } @{ $handler->get_content() };
 
   if ( $opt{tonewsboat} ) {
+    my $DATE   = $handler->{date};
+    my $URL    = $handler->{url};
+    my $TITLE  = $handler->{title};
+    my $SOURCE = $handler->{source};
     unshift @contents, "\n"                   if any { defined $_ } $DATE, $URL, $TITLE, $SOURCE;
     unshift @contents, "Last Access: $DATE\n" if defined $DATE;
     unshift @contents, "Link: $URL\n"         if defined $URL;
