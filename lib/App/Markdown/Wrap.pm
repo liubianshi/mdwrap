@@ -17,10 +17,15 @@ sub run {
   local @ARGV = @_;
 
   set_environemnt_variable( \%opt );
+  my @block_pids;
+  my @contents;
 
   while (<>) {
     chomp;
     $_ .= "\n";
+
+    # 以异步方式处理 block 的折行问题;
+    async_handle_block( \@block_pids, shift @{ $handler->get_content() } );
 
     # YAML
     next if $handler->yaml_header($_);
@@ -70,8 +75,16 @@ sub run {
   }
 
   $handler->upload() unless $handler->block_is_empty();
+  for ( @{ $handler->get_content() } ) {
+    async_handle_block( \@block_pids, $_ );
+  }
 
-  my @contents = map { $_->tostring() } @{ $handler->get_content() };
+  for (@block_pids) {
+    my $kid    = waitpid $_->[0], 0;
+    my $reader = $_->[1];
+    push @contents, $_ while <$reader>;
+    close $reader;
+  }
 
   if ( $opt{tonewsboat} ) {
     my $DATE   = $handler->{date};
@@ -86,6 +99,29 @@ sub run {
   }
 
   print join "", @contents;
+}
+
+sub async_handle_block {
+  my $contents_ref = shift;
+  my $block        = shift or return;
+  pipe( my $reader, my $pipe );
+
+  my $pid = fork;
+  if ( !defined $pid ) {
+    warn "Fork failed $!";
+    kill 'TERM', map { $_->[0] } @{$contents_ref};
+    exit;
+  }
+  elsif ( $pid == 0 ) {
+    close $reader;
+    print {$pipe} $block->tostring();
+    close $pipe;
+    exit;
+  }
+  else {
+    close $pipe;
+    push @{$contents_ref}, [ $pid, $reader ];
+  }
 }
 
 1;    # End of App::Markdown::Wrap

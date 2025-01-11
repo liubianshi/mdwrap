@@ -20,6 +20,7 @@ sub new {
   my $self  = {
     content      => ( shift or [] ),
     block        => App::Markdown::Block->new(),
+    last_block   => undef,
     title        => undef,
     url          => undef,
     date         => undef,
@@ -42,6 +43,7 @@ sub upload {
   my ( $self, $attr ) = @_;
   my $block = $self->{block};
   $block->update( { attr => $attr // {} } );
+  $self->{last_block} = $self->{block};
   push @{ $self->{content} }, $self->{block};
   $self->{block} = App::Markdown::Block->new();
 }
@@ -95,7 +97,7 @@ sub normal_line {
   # 保留特意插入的空行
   if ( $line !~ m/\S/ ) {
     if ( $self->block_is_empty() ) {
-      my $last_block = $self->get_content(-1);
+      my $last_block = $self->{last_block};
       if ( not $last_block->get("add_empty_line") ) {
         $self->{block}->extend("\n");
         $self->upload();
@@ -536,14 +538,18 @@ sub adjust_tonewsboat_image {
 sub quote {
   my ( $self, $line ) = @_;
   my ( $indent_num, $quote_level, $line_without_quote_symbol ) = ( 0, 0, q() );
-  if ( $line =~ m/\A ( \s* (\>+) ) \s+ \z/xms ) {
+  if ( $line =~ m/\A ( \s* (\>+) ) [\s\n]* \z/xms ) {
     $indent_num  = length($1);
     $quote_level = length($2);
     $line        = "$1\n";
   }
-  elsif ( $line =~ m/\A ( \s* (\>+) (?:\h+) )/xms ) {
+  elsif ( $line =~ m/\A ( \s* (\>+) (\h*) )/xms ) {
     $indent_num  = length($1);
     $quote_level = length($2);
+    if ( length($3) == 0 ) {
+      $line = substr( $line, 0, $indent_num ) . " " . substr( $line, $indent_num );
+      $indent_num += 1;
+    }
   }
   elsif ( $line =~ m/\A (\s+)/xms ) {
     $indent_num = length($1);
@@ -570,14 +576,15 @@ sub quote {
 
     ## End of previous paragraph and start of new paragraph
     if ( $line_without_quote_symbol !~ m/\S/ ) {
-      $self->upload( { add_empty_line => 0 } );
+      $self->upload( { add_empty_line => 0 } ) unless $self->block_is_empty();
+      $self->{block}->extend($line);
+      $self->upload( { wrap => 0 } );
       $self->{block}->update(
         {
           type => "quote",
-          attr => { marker => $mblock, add_empty_line => 0 },
+          attr => { marker => $mblock, add_empty_line => 0, empty => 1 },
         }
       );
-      $self->{block}->extend( substr( $line, 0, $indent_num ) =~ s/\n*$/\n/mxsr );
     }
     elsif ( $quote_level == $mblock ) {
       return 1
@@ -610,32 +617,21 @@ sub quote {
 
     # callout title need in seperate line
     if ( $line =~ m/\A \s* (\>+)  \s+ \[ \! [^\]\s]+ \] /xms ) {
-      $self->{block}->update(
-        {
-          text => $line,
-          type => "callout",
-          attr => {
-            wrap           => 0,
-            add_empty_line => 0,
-            empty          => 0,
-          }
-        }
-      );
-      $self->upload();
+      $self->{block}->extend($line);
+      $self->upload( { wrap => 0, add_empty_line => 0 } );
       $line = "";
     }
     $self->{block}->update(
       {
-        text => $line,
         type => "quote",
         attr => {
           marker         => $quote_level,
           add_empty_line => 0,
-          empty          => 0,
         }
       }
     );
 
+    $self->{block}->extend($line) if $line ne "";
     return 1;
   }
 

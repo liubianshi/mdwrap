@@ -61,7 +61,7 @@ sub tostring {
 
   my $re = $self->get("text");
   $re = wrap( "", indent($re), $re ) if $self->get("wrap");
-  $re .= "\n" if $self->get("add_empty_line");
+  $re .= "\n" if $self->get("add_empty_line") == 1;
 
   return $re;
 }
