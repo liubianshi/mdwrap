@@ -197,26 +197,20 @@ OUTER:
       # 换行符号的特殊处理
       if ( $char eq $NEW_LINE ) {
         $text =~ s/\A\s+//;    # Remove the original indentation of a paragraph
+        $text_len = length($text);
 
         # When the first character of the next line is CJK,
         # there is no need to add an extra space when merging lines.
         $next_char_attr = _char_attr( ord substr( $text, 0, 1 ) );
-        if (
-          (
-            ( $word->{str} eq "" and _char_attr( ord substr( $line->{str}, -1 ) ) ne "OTHER" )
-            or _char_attr( ord substr( $word->{str}, -1 ) ) ne "OTHER"
-          )
-          and ( mbwidth($text) > 1 and $next_char_attr ne "OTHER" )
-          )
-        {
-          $char       = "";
-          $char_width = 0;
+        if ( mbwidth($text) > 1 and $next_char_attr ne "OTHER" ) {
+          my $last_char = substr( $word->{str} eq "" ? $line->{str} : $word->{str}, -1 );
+          $char = ( $last_char eq $SPACE || _char_attr($last_char) ne "OTHER" ) ? "" : $SPACE;
         }
         else {
-          $char       = $SPACE;
-          $char_width = 1;
+          $char = $SPACE;
         }
-        $char_attr = "";
+        $char_width = $char eq "" ? 0 : 1;
+        $char_attr  = "";
       }
 
       $next_char      = substr( $text, 0, 1 );
@@ -266,7 +260,7 @@ OUTER:
       }
 
       # 新字符为空字符
-      if ( $char =~ m/\A \s* \z/mxs ) {
+      if ( $char eq "" or $char =~ m/\A \s* \z/mxs ) {
 
         # 当行长已经足够时，可以省略空格
         _line_extend( $line, $word->{str}, $word->{len} ) unless $word->{str} eq $SPACE;
