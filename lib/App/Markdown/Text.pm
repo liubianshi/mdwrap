@@ -27,8 +27,6 @@ sub wrap {
   my $oritext      = shift;
   my $opts         = shift;
 
-  print "LineWidth: $LINE_WIDTH\n";
-
   # Segmented processing, can consider using multi-threading in the future
   my @paragrphs = split /^\s*$/mxs, $oritext;
   if ( scalar @paragrphs > 1 ) {
@@ -71,7 +69,7 @@ OUTER:
 
       # end of line terminator
       if ( $char eq $NEW_LINE and $text =~ m/\A\s*\z/mxs ) {
-        $line = _string_extend( $line, $word->{str}, $word->{len} ) if $sub_env eq "";
+        _line_extend( $line, $word->{str}, $word->{len} ) if $sub_env eq "";
         if ( $i == scalar @oritexts ) {
           push @lines, $line->{str} if $line->{len} > 0;
           last OUTER;
@@ -83,7 +81,7 @@ OUTER:
         or ( $sub_env eq "" and $char eq "`" and $word->{str} !~ m/\\$/ ) )
       {
         if ( $sub_env ne "code" ) {
-          $line = _string_extend( $line, $word->{str}, $word->{len} );
+          _line_extend( $line, $word->{str}, $word->{len} );
           $word = _string_init( $char, $char_width );
           if ( $text_len == 0 ) {
             $sub_env = "code";
@@ -96,8 +94,8 @@ OUTER:
         while ( defined $char
           and ( $char ne '`' or $word->{str} =~ m/[\\]$/ ) )
         {
-          $char = $SPACE if $char eq $NEW_LINE;                # `` 内不应该有断行
-          $word = _word_extend( $word, $char, $char_width );
+          $char = $SPACE if $char eq $NEW_LINE;    # `` 内不应该有断行
+          _word_extend( $word, $char, $char_width );
           if ( $text_len == 0 ) {
             $sub_env = "code";
             next OUTER;
@@ -105,13 +103,12 @@ OUTER:
           ( $char, $text, $char_width, $char_attr ) = _extract($text);
           $text_len = length($text);
         }
-        $word    = _word_extend( $word, $char, $char_width );
+        _word_extend( $word, $char, $char_width );
         $sub_env = "";
 
-        # 当加入文献引用后句子超长时，就应该先断行
         wrap_line( \@lines, $line, $word )
           and $line = _string_init($prefix_other);
-        $line = _string_extend( $line, $word->{str}, $word->{len}, { noprocess => 1 } );
+        _line_extend( $line, $word->{str}, $word->{len}, { noprocess => 1 } );
         $word = _string_init();
         next INNER;
       }
@@ -121,7 +118,7 @@ OUTER:
         or ( $sub_env eq "" and $char eq "\$" and $word->{str} !~ m/\\$/ ) )
       {
         if ( $sub_env ne "inline_eq" ) {
-          $line = _string_extend( $line, $word->{str}, $word->{len} );
+          _line_extend( $line, $word->{str}, $word->{len} );
           $word = _string_init( $char, $char_width );
           if ( $text_len == 0 ) {
             $sub_env = "inline_eq";
@@ -134,8 +131,8 @@ OUTER:
         while ( defined $char
           and ( $char ne "\$" or $word->{str} =~ m/[\\]$/ ) )
         {
-          $char = $SPACE if $char eq $NEW_LINE;                # `` 内不应该有断行
-          $word = _word_extend( $word, $char, $char_width );
+          $char = $SPACE if $char eq $NEW_LINE;    # `` 内不应该有断行
+          _word_extend( $word, $char, $char_width );
           if ( $text_len == 0 ) {
             $sub_env = "inline_eq";
             next OUTER;
@@ -143,37 +140,14 @@ OUTER:
           ( $char, $text, $char_width, $char_attr ) = _extract($text);
           $text_len = length($text);
         }
-        $word    = _word_extend( $word, $char, $char_width );
+        _word_extend( $word, $char, $char_width );
         $sub_env = "";
 
         wrap_line( \@lines, $line, $word )
           and $line = _string_init($prefix_other);
-        $line = _string_extend( $line, $word->{str}, $word->{len}, { noprocess => 1 } );
+        _line_extend( $line, $word->{str}, $word->{len}, { noprocess => 1 } );
         $word = _string_init();
         next INNER;
-      }
-
-      # 换行符号的特殊处理
-      $next_char      = substr( $text, 0, 1 );
-      $next_char_attr = _char_attr( ord $next_char );
-      if ( $char eq $NEW_LINE ) {
-
-        # Remove the original indentation of a paragraph
-        $text =~ s/\A\s+//;
-
-        # When the first character of the next line is CJK,
-        # there is no need to add an extra space when merging lines.
-        $next_char_attr = _char_attr( ord substr( $text, 0, 1 ) );
-        if (  _char_attr( ord substr( $line->{str}, -1 ) ) ne "OTHER"
-          and mbwidth($text) > 1
-          and $next_char_attr ne "OTHER" )
-        {
-          $char       = "";
-          $char_width = 0;
-        }
-        else {
-          $char = $SPACE;
-        }
       }
 
       # No spaces should be inserted between bibliographic citations
@@ -186,7 +160,7 @@ OUTER:
          )
       {
         if ( $sub_env ne "cite" ) {
-          $line = _string_extend( $line, $word->{str}, $word->{len} );
+          _line_extend( $line, $word->{str}, $word->{len} );
           $word = _string_init( $char, $char_width );
           if ( $text_len == 0 ) {
             $sub_env = "cite";
@@ -203,7 +177,7 @@ OUTER:
           and none { $char eq $_ } ( "", $SPACE, $NEW_LINE, split( //, '],:;' ) )
           and none { $char_attr eq $_ } qw(CJK_PUN PUN_FORBIT_BREAK_BEFORE PUN_FORBIT_BREAK_AFTER) )
         {
-          $word = _word_extend( $word, $char, $char_width );
+          _word_extend( $word, $char, $char_width );
           if ( $text_len == 0 ) {
             $sub_env = "cite";
             next OUTER;
@@ -216,81 +190,86 @@ OUTER:
         # 当加入文献引用后句子超长时，就应该先断行
         wrap_line( \@lines, $line, $word )
           and $line = _string_init($prefix_other);
-        $line = _string_extend( $line, $word->{str}, $word->{len} );
+        _line_extend( $line, $word->{str}, $word->{len} );
         $word = _string_init();
       }
 
       # 换行符号的特殊处理
-      $next_char      = substr( $text, 0, 1 );
-      $next_char_attr = _char_attr( ord $next_char );
       if ( $char eq $NEW_LINE ) {
-
-        # Remove the original indentation of a paragraph
-        $text =~ s/\A\s+//;
+        $text =~ s/\A\s+//;    # Remove the original indentation of a paragraph
 
         # When the first character of the next line is CJK,
         # there is no need to add an extra space when merging lines.
         $next_char_attr = _char_attr( ord substr( $text, 0, 1 ) );
-        if ( mbwidth($text) > 1 and $next_char_attr ne "OTHER" ) {
+        if (
+          (
+            ( $word->{str} eq "" and _char_attr( ord substr( $line->{str}, -1 ) ) ne "OTHER" )
+            or _char_attr( ord substr( $word->{str}, -1 ) ) ne "OTHER"
+          )
+          and ( mbwidth($text) > 1 and $next_char_attr ne "OTHER" )
+          )
+        {
           $char       = "";
           $char_width = 0;
         }
         else {
-          $char = $SPACE;
+          $char       = $SPACE;
+          $char_width = 1;
         }
+        $char_attr = "";
       }
+
+      $next_char      = substr( $text, 0, 1 );
+      $next_char_attr = _char_attr( ord $next_char );
 
       # line wrap are not allowed after the current letter
       # or the next character cannot be the start of a new line.
       if ( $char_attr eq "PUN_FORBIT_BREAK_AFTER"
         || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE" )
       {
-        $line = _string_extend( $line, $word->{str}, $word->{len} );
-        $line = _string_extend( $line, $char,        $char_width );
+        _line_extend( $line, $word->{str}, $word->{len} );
+        _line_extend( $line, $char,        $char_width );
         $word = _string_init();
         next INNER;
       }
 
-      # when the current line have enough room for the curren character
-      my $with_enough_room = do {
-        my $newline_length   = $line->{len} + $word->{len} + $char_width;
-        my $with_enough_room = ( $LINE_WIDTH - $line->{len} ) - ( $newline_length - $LINE_WIDTH );
-        if ( $with_enough_room <= 0 ) {
-          $newline_length = $newline_length - concealed_chars( $line->{str} . $word->{str} . $char );
-          $with_enough_room =
-            ( $LINE_WIDTH - $line->{len} + concealed_chars( $line->{str} ) ) - ( $newline_length - $LINE_WIDTH );
-        }
-        $with_enough_room;
-      };
+      # whether the current line have enough room for the curren character
+      my $with_enough_room = remaining_space( $line, $word, { str => $char, len => $char_width } );
 
       # 下一个字符为英文字符时，需要引入额外的空格，导致前面的计算不准
-      if (  $with_enough_room == 1
-        and $line->{str} !~ m/\s$/
-        and $word->{str} eq ""
-        and $char_attr eq "OTHER" )
-      {
-        push @lines, $line->{str};
-        $line = _string_init($prefix_other);
-        $word = _word_extend( $word, $char, $char_width );
-        next INNER;
-      }
+      # if (  $with_enough_room == 1
+      #   and $line->{str} !~ m/\s$/
+      #   and $word->{str} eq ""
+      #   and $char_width > 0
+      #   and $char_attr eq "OTHER" )
+      # {
+      #   push @lines, $line->{str};
+      #   $line = _string_init($prefix_other);
+      #   _word_extend( $word, $char, $char_width );
+      #   next INNER;
+      # }
 
       if ( $with_enough_room > 0 ) {
-        if ( $char eq $SPACE || $char_attr ne "OTHER" ) {
-          $line = _string_extend( $line, $word->{str}, $word->{len} );
-          $line = _string_extend( $line, $char,        $char_width );
+        if ( $char_width == 0 ) {
+          _line_extend( $line, $word->{str}, $word->{len} );
+          $word = _string_init();
+        }
+        elsif ( $char eq $SPACE || $char_attr ne "OTHER" ) {
+          _line_extend( $line, $word->{str}, $word->{len} );
+          _line_extend( $line, $char,        $char_width );
           $word = _string_init();
         }
         else {
-          $word = _word_extend( $word, $char, $char_width );
+          _word_extend( $word, $char, $char_width );
         }
         next INNER;
       }
 
       # 新字符为空字符
       if ( $char =~ m/\A \s* \z/mxs ) {
-        $line = _string_extend( $line, $word->{str}, $word->{len} )
-          unless $word->{str} eq $SPACE;
+
+        # 当行长已经足够时，可以省略空格
+        _line_extend( $line, $word->{str}, $word->{len} ) unless $word->{str} eq $SPACE;
         push @lines, $line->{str};
         $line = _string_init($prefix_other);
         $word = _string_init();
@@ -301,13 +280,13 @@ OUTER:
       if ( $line->{str} =~ m/\s$/ and $word->{str} eq "" ) {
         push @lines, $line->{str} =~ s/\s$//r;
         $line = _string_init($prefix_other);
-        $word = _word_extend( $word, $char, $char_width );
+        _word_extend( $word, $char, $char_width );
         next INNER;
       }
 
       if ( any { $char_attr eq $_ } qw(CJK CJK_PUN PUN_FORBIT_BREAK_BEFORE) ) {
-        $line = _string_extend( $line, $word->{str}, $word->{len} );
-        $line = _string_extend( $line, $char,        $char_width );
+        _line_extend( $line, $word->{str}, $word->{len} );
+        _line_extend( $line, $char,        $char_width );
         push @lines, $line->{str};
 
         # Spaces between CJK and English should be removed after a line break
@@ -318,11 +297,9 @@ OUTER:
         next INNER;
       }
 
-      $word = _word_extend( $word, $char, $char_width );
-      if ( $line->{len} + $word->{len} - $LINE_WIDTH > $LINE_WIDTH - $line->{len} ) {
-        push @lines, $line->{str};
-        $line = _string_init($prefix_other);
-      }
+      _word_extend( $word, $char, $char_width );
+      push @lines, $line->{str};
+      $line = _string_init($prefix_other);
     }
   }
 
@@ -335,7 +312,7 @@ sub _string_init {
   return { str => $str, len => $len };
 }
 
-sub _string_extend {
+sub _line_extend {
   my ( $str_ref, $char, $width, $opt_ref ) = @_;
   $width //= mbswidth($char);
   return $str_ref if $width == 0;
@@ -431,6 +408,9 @@ sub _char_attr {
     0xffe5,    # ￥ Fullwidth yen sign
   );
   my @punctuations_forbit_break_before = (
+    0x002c,    # ,  Comma
+    0x002e,    # .  Full stop
+    0x003b,    # ;  Semicolon
     0x2014,    # —  Em dash
     0x2019,    # ’  Right single quotation mark
     0x201d,    # ”  Right double quotation mark
@@ -520,14 +500,44 @@ sub wrap_line {
   my ( $lines_ref, $line, $word, $char, $char_width ) = @_;
   $char       //= "";
   $char_width //= mbswidth($char);
-  my $length  = $line->{len} + $word->{len} + $char_width;
-  my $max     = $LINE_WIDTH + ( $word->{len} + $char_width ) / 2;
-  my $newline = $line->{str} . $word->{str} . $char;
-  if ( $length >= $max and $length >= $max + concealed_chars($newline) ) {
+  if ( remaining_space( $line, $word, { str => $char, len => $char_width } ) <= 0 ) {
     push @$lines_ref, $line->{str};
     return 1;
   }
+
   return undef;
+}
+
+sub cal_remaining_space {
+  my ( $origin, $new, $limit ) = @_;
+  $limit //= $LINE_WIDTH;
+  return ( $limit - $origin ) - ( $new - $limit );
+}
+
+sub remaining_space {
+  my ( $l, $w, $c ) = @_;
+  $c //= { str => "", len => 0 };
+
+  my $lw = $l->{len} + $w->{len} + $c->{len};
+
+  # 当单词过长时，需要在过长和过短之间权衡
+  my $rm = cal_remaining_space( $l->{len}, $lw );
+
+  # 当接近行长时，比较合并前后行长的情况
+  if ( $rm <= 4 ) {
+    my $nl = _line_extend( { str => $l->{str}, len => $l->{len} }, $w->{str}, $w->{len} );
+    $nl = _line_extend( $nl, $c->{str}, $c->{len} );
+    $lw = $nl->{len};
+    $rm = cal_remaining_space( $l->{len}, $lw );
+
+    # 当行长不够时，考虑 conceal 后再进行比较
+    if ( $rm <= 0 ) {
+      $lw = $lw - concealed_chars($nl);
+      $rm = cal_remaining_space( $l->{len} - concealed_chars( $l->{str} ), $lw );
+    }
+  }
+
+  return $rm;
 }
 
 1;

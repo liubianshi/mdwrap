@@ -14,7 +14,6 @@ sub run {
   my $class   = shift;
   my %opt     = %{ shift() };
   my $handler = App::Markdown::Handler->new( \%opt );
-  dump %opt;
   local @ARGV = @_;
 
   set_environemnt_variable( \%opt );
