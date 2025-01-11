@@ -204,7 +204,7 @@ OUTER:
         $next_char_attr = _char_attr( ord substr( $text, 0, 1 ) );
         if ( mbwidth($text) > 1 and $next_char_attr ne "OTHER" ) {
           my $last_char = substr( $word->{str} eq "" ? $line->{str} : $word->{str}, -1 );
-          $char = ( $last_char eq $SPACE || _char_attr($last_char) ne "OTHER" ) ? "" : $SPACE;
+          $char = ( $last_char eq $SPACE || _char_attr( ord $last_char ) ne "OTHER" ) ? "" : $SPACE;
         }
         else {
           $char = $SPACE;
@@ -526,7 +526,7 @@ sub remaining_space {
 
     # 当行长不够时，考虑 conceal 后再进行比较
     if ( $rm <= 0 ) {
-      $lw = $lw - concealed_chars($nl);
+      $lw = $lw - concealed_chars( $nl->{str} );
       $rm = cal_remaining_space( $l->{len} - concealed_chars( $l->{str} ), $lw );
     }
   }

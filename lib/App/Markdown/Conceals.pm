@@ -1,6 +1,7 @@
 package App::Markdown::Conceals;
 use strict;
 use warnings;
+use Data::Dump      qw(dump);
 use Text::CharWidth qw(mbswidth mblen mbwidth);
 use Exporter 'import';
 our @EXPORT_OK = qw(
@@ -91,6 +92,7 @@ sub concealed_chars {
     my $display = $_->{display} // sub { "" };
     $text_temp =~ s/($regex)/$display->($1)/emxgs;
   }
+
   return mbswidth($text) - mbswidth($text_temp);
 }
 

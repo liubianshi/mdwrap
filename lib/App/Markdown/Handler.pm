@@ -70,8 +70,8 @@ sub yaml_header {
 
   return if    # yaml needed set at the beginning
     $btype ne "yaml"
-    and ( scalar $self->{content} > 0 or $block->get('text') ne "" );
-
+    and ( defined $self->{last_block} or $block->get('text') ne "" );
+  dump $self->{last_block};
   my $match_yaml_symbol = $line =~ m/^\s*\-{3,}\s*$/;
   return if $btype ne "yaml" and not $match_yaml_symbol;
 
