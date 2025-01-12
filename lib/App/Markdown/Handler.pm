@@ -67,11 +67,12 @@ sub yaml_header {
   my ( $self, $line ) = @_;
   my $block = $self->{block};
   my $btype = $block->get("type");
+  if (  ( $btype ne "yaml" )
+    and ( defined $self->{last_block} or $block->get('text') ne "" ) )
+  {
+    return;
+  }
 
-  return if    # yaml needed set at the beginning
-    $btype ne "yaml"
-    and ( defined $self->{last_block} or $block->get('text') ne "" );
-  dump $self->{last_block};
   my $match_yaml_symbol = $line =~ m/^\s*\-{3,}\s*$/;
   return if $btype ne "yaml" and not $match_yaml_symbol;
 
@@ -98,7 +99,7 @@ sub normal_line {
   if ( $line !~ m/\S/ ) {
     if ( $self->block_is_empty() ) {
       my $last_block = $self->{last_block};
-      if ( not $last_block->get("add_empty_line") ) {
+      if ( defined $last_block and not $last_block->get("add_empty_line") ) {
         $self->{block}->extend("\n");
         $self->upload();
       }
@@ -312,6 +313,22 @@ sub pandoc_table_other {
   }
 
   # end: empty line after special seperator line
+  if ( $tblock eq "table" and $mblock eq "pandoc-start" and $empty_line ) {
+    $block->update(
+      {
+        type => 'sepline',
+        attr => {
+          marker         => "",
+          wraop          => 0,
+          add_empty_line => 1,
+          empty          => 0
+        }
+      }
+    );
+    $self->upload();
+    return 1;
+  }
+
   if ( $tblock eq "table" and $mblock eq "pandoc-sep" and $empty_line ) {
     $self->upload( { add_empty_line => 1 } );
     return 1;
