@@ -8,15 +8,17 @@ use App::Markdown::Utils qw( get_indent_prefix indent);
 
 sub new {
   my $class = shift;
+  my $args  = shift;
   my $self  = {
-    text => ( shift() or "" ),
-    type => ( shift() or "normal" ),
+    text => "",
+    type => "normal",
     attr => {
       wrap           => 1,
       add_empty_line => 0,
       marker         => "",
       empty          => 1,
-    }
+    },
+    %{ $args // {} }
   };
   bless $self, $class;
   return $self;

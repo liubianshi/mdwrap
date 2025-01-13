@@ -18,7 +18,7 @@ sub new {
   my $class = shift;
   my $args  = shift;
   my $self  = {
-    content      => ( shift or [] ),
+    blocks       => [],
     block        => App::Markdown::Block->new(),
     last_block   => undef,
     title        => undef,
@@ -44,16 +44,18 @@ sub upload {
   my $block = $self->{block};
   $block->update( { attr => $attr // {} } );
   $self->{last_block} = $self->{block};
-  push @{ $self->{content} }, $self->{block};
+  push @{ $self->{blocks} }, $self->{block};
   $self->{block} = App::Markdown::Block->new();
 }
 
-sub get_content {
-  my $self         = shift;
-  my $pos          = shift;
-  my $contents_ref = $self->{content};
-  return $contents_ref unless defined $pos;
-  return $contents_ref->[$pos];
+sub get_contents {
+  my $self = shift;
+  return $self->{contents};
+}
+
+sub get {
+  my ( $self, $key ) = @_;
+  return $self->{$key};
 }
 
 sub block_is_empty {
@@ -131,12 +133,13 @@ sub math {
   my ( $self, $line ) = @_;
   my $block = $self->{block};
   my $btype = $block->get("type");
+  my $mtype = $block->get("marker");
 
   # end
   if (
     $btype eq "math"
-    and (( $block->get("marker") eq "markdown" and $line =~ m/\s*\$\$/ )
-      or ( $block->get("marker") eq "latex" and $line =~ m/\s*\\\]/ ) )
+    and (( $mtype eq "markdown" and $line =~ m/\s*\$\$/ )
+      or ( $mtype eq "latex" and $line =~ m/\s*\\\]/ ) )
      )
   {
     $block->extend($line);
@@ -160,7 +163,7 @@ sub math {
         attr => {
           wrap           => 0,
           add_empty_line => 0,
-          marker         => $1 eq "$$" ? "markdown" : "latex",
+          marker         => $1 eq '$$' ? "markdown" : "latex",
         }
       }
     );
