@@ -1,8 +1,8 @@
 package App::Markdown::Handler;
 
-use v5.30;
 use strict;
 use warnings;
+use utf8;
 use Data::Dump           qw(dump);
 use List::Util           qw(any);
 use App::Markdown::Utils qw(

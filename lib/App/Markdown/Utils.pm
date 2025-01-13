@@ -12,22 +12,6 @@ our @EXPORT_OK = qw(
   indent
 );
 
-sub get_indent_prefix {
-  my $str    = shift;
-  my $prefix = "";
-
-  my $todo_regex  = qr/\[\w?\]\s+/xms;
-  my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:\s$todo_regex)?/xms;
-  my $def_regex   = qr/(?:\: \s+)/xms;
-  my $quote_regex = qr/\>+\s+/;
-
-  # Quatation may contain list structures
-  if ( $str =~ m{\A  (\s*) ($quote_regex?) ((?:$list_regex|$def_regex)?) }mxs ) {
-    $prefix = $1 . $2 . ( "" x length($3) );
-  }
-  return $prefix;
-}
-
 sub is_table_line {
   my $str = shift;
   return 1 if $str =~ m{^\s*(\||\+[-=])}xms;
@@ -59,7 +43,7 @@ sub indent {
   my $str         = shift;
   my $prefix      = "";
   my $todo_regex  = qr/\[\w?\]\s+/xms;
-  my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:\s$todo_regex)?/xms;
+  my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:$todo_regex\s)?/xms;
   my $def_regex   = qr/(?:\: \s+)/xms;
   my $quote_regex = qr/\>+\s+/;
   if ( $str =~ m{\A  (\s*) ($quote_regex?) ((?:$list_regex|$def_regex)?) }mxs ) {

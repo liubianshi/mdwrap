@@ -2,6 +2,7 @@ package App::Markdown::Wrap;
 
 use v5.30;
 use strict;
+use POSIX;
 use warnings;
 use Data::Dump qw(dump);
 use utf8;
