@@ -50,7 +50,7 @@ my $special_syntax = {
       my $arg       = shift;
       my $char      = $arg->{char};
       my $left_char = $arg->{left};
-      return ( $char eq "@" and $left_char !~ m/[-\\A-Za-z0-9_]$/ );
+      return ( $char eq "@" and ( $left_char =~ /^\s*$/ || _char_attr( ord $left_char ) ne "OTHER" ) );
     },
     end => sub {
       my $arg    = shift;
