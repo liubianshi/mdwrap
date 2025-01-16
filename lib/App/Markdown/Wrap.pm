@@ -85,6 +85,7 @@ sub run {
     }
 
     # 代码块中的内容不折叠
+    next if $handler->line_code_block($_);
     next if $handler->code_block($_);
 
     # table

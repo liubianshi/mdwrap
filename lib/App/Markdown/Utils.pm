@@ -40,6 +40,11 @@ sub is_definition_header {
   return scalar m/^ \s* [~:] \s \s* /mxs;
 }
 
+sub is_code_block {
+  my $str = shift;
+  return $str =~ m/\A\h{4}/;
+}
+
 sub indent {
   my $str         = shift;
   my $prefix      = "";

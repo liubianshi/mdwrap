@@ -205,7 +205,7 @@ sub code_block {
     $block_text =~ s/\A(\s*[`~]{3,}[^\n]*\n)(?:\s*\n)+/$1/;
     $block_text =~ s/(?:\n\s*)+(\n[`~]{3,}\s*\n+)\z/$1/;
     $block->update( { text => $block_text } );
-    $self->upload( { add_emptry_line => 1 } );
+    $self->upload( { add_empty_line => 0 } );
 
     return 1;
   }
@@ -620,6 +620,18 @@ sub line_can_sep_paragraph {
   }
 
   return;
+}
+
+sub line_code_block {
+  my ( $self, $line ) = @_;
+  my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+  return if $line !~ m/\A\h{4,}/;
+
+  $self->upload() unless $self->block_is_empty();
+  $self->{block}->extend($line);
+  $self->upload( { wrap => 0, add_empty_line => 0 } );
+  return 1;
 }
 
 sub update_prefix {
