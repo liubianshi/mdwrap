@@ -1,6 +1,7 @@
 package App::Markdown::Block;
 use strict;
 use warnings;
+use Data::Dump qw/dump/;
 
 use List::Util           qw(none);
 use App::Markdown::Text  qw(wrap);
@@ -13,6 +14,7 @@ sub new {
     text => "",
     type => "normal",
     attr => {
+      prefix         => "",
       wrap           => 1,
       add_empty_line => 0,
       marker         => "",
@@ -25,12 +27,9 @@ sub new {
 }
 
 sub extend {
-  my $self     = shift;
-  my $new_text = join( "", @_ );
-  if ( $new_text ne "" ) {
-    $self->{attr}{empty} = 0 if $self->{attr}{empty} == 1;
-    $self->{'text'} .= $new_text;
-  }
+  my $self = shift;
+  $self->{'text'} .= join "", @_;
+  $self->{attr}{empty} = 0 if $self->{attr}{empty} == 1;
 }
 
 sub get {
@@ -60,10 +59,19 @@ sub update {
 sub tostring {
   my $self = shift;
   return "" if $self->get("empty");
+  my $prefix = $self->get("prefix") // "";
 
   my $re = $self->get("text");
-  $re = wrap( "", indent($re), $re ) if $self->get("wrap");
-  $re .= "\n" if $self->get("add_empty_line") == 1;
+  if ( $self->get("wrap") ) {
+    my $indent = $prefix . indent($re);
+    $re = wrap( $prefix, $indent, $re );
+  }
+  else {
+    $re = join "\n", map { $prefix . $_ } ( split /\n/, $re );
+    $re .= "\n";
+  }
+
+  $re .= $self->get("prefix") . "\n" if $self->get("add_empty_line") == 1;
 
   return $re;
 }

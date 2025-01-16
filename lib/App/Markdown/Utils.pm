@@ -9,6 +9,7 @@ our @EXPORT_OK = qw(
   is_list_first_line
   is_link_list
   is_definition_header
+  format_quote_line
   indent
 );
 
@@ -45,11 +46,34 @@ sub indent {
   my $todo_regex  = qr/\[\w?\]\s+/xms;
   my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:$todo_regex\s)?/xms;
   my $def_regex   = qr/(?:\: \s+)/xms;
-  my $quote_regex = qr/\>+\s+/;
+  my $quote_regex = qr/(?:\>\s)+/;
   if ( $str =~ m{\A  (\s*) ($quote_regex?) ((?:$list_regex|$def_regex)?) }mxs ) {
     $prefix = $1 . $2 . ( " " x length($3) );
   }
   return $prefix;
+}
+
+sub format_quote_line {
+  my $line               = shift;
+  my $prefix             = "";
+  my $continue_space_num = 0;
+
+  for my $i ( 0 .. length($line) ) {
+    my $char = substr( $line, $i, 1 );
+    if ( $char eq ">" ) {
+      $prefix .= "> ";
+      $continue_space_num = 0;
+    }
+    elsif ( $char =~ m/\h/ ) {
+      $continue_space_num++;
+    }
+    else {
+      $line = substr( $line, $continue_space_num >= 4 ? $i - 4 : $i );
+      last;
+    }
+  }
+
+  return ( $prefix, $line );
 }
 
 1;

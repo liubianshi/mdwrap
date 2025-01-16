@@ -10,6 +10,7 @@ use open ':std', ':encoding(UTF-8)';
 use List::Util          qw(any none);
 use App::Markdown::Text qw(set_environemnt_variable);
 use App::Markdown::Handler;
+use App::Markdown::Utils qw(format_quote_line);
 
 sub run {
   my $class   = shift;
@@ -25,8 +26,49 @@ sub run {
     chomp;
     $_ .= "\n";
 
-    # YAML
+    my $current_prefix     = $handler->get("prefix");
+    my $current_block_type = $handler->get("block")->get("type");
+
+    # 嵌入结构
+    if ( $current_prefix =~ m/\A[>]/ ) {
+      my ( $q, $l ) = format_quote_line($_);
+      my $prefix = substr( $q, 0, length($current_prefix) );
+      if ( $prefix ne $current_prefix ) {
+        if ( $_ !~ m/\S/ ) {
+          $handler->update_prefix("");
+          $handler->upload( { add_empty_line => 0 } );
+        }
+        elsif ( $q ne "" ) {
+          $handler->update_prefix($q);
+          $handler->upload();
+          $_ = $l;
+        }
+      }
+      else {
+        $_ = substr( $q, length($current_prefix) ) . $l;
+      }
+    }
+
+    # prefix 不同的行不能放在同一个 block, 以保证每个 block 有唯一的 prefix
+    my $current_block = $handler->get("block");
+    if ( $current_block->get("prefix") ne $handler->get("prefix") ) {
+      if ( $handler->block_is_empty() ) {
+        my $last_block = $handler->get("last_block");
+        if ( defined $last_block and not $last_block->get("add_empty_line") ) {
+          $current_block->extend("\n");
+          $handler->upload();
+        }
+      }
+      else {
+        $handler->upload( { add_empty_line => 1 } );
+      }
+    }
+
+    # YAML, 必须在文件开头
     next if $handler->yaml_header($_);
+
+    # Quote, 引用可能包含其他结构，
+    next if $handler->quote($_);
 
     # Div
     next if $handler->pandoc_div($_);

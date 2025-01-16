@@ -11,6 +11,7 @@ use App::Markdown::Utils qw(
   is_list_first_line
   is_link_list
   is_definition_header
+  format_quote_line
 );
 use App::Markdown::Block;
 
@@ -21,6 +22,7 @@ sub new {
     blocks       => [],
     block        => App::Markdown::Block->new(),
     last_block   => undef,
+    prefix       => "",
     title        => undef,
     url          => undef,
     date         => undef,
@@ -42,10 +44,11 @@ sub new {
 sub upload {
   my ( $self, $attr ) = @_;
   my $block = $self->{block};
-  $block->update( { attr => $attr // {} } );
+  $block->update( { attr => { %{ $attr // {} } } } );
   $self->{last_block} = $self->{block};
   push @{ $self->{blocks} }, $self->{block};
   $self->{block} = App::Markdown::Block->new();
+  $self->{block}->update( { attr => { prefix => $self->get("prefix") } } );
 }
 
 sub get_contents {
@@ -69,6 +72,7 @@ sub yaml_header {
   my ( $self, $line ) = @_;
   my $block = $self->{block};
   my $btype = $block->get("type");
+  return if $self->get("prefix") ne "";
   if (  ( $btype ne "yaml" )
     and ( defined $self->{last_block} or $block->get('text') ne "" ) )
   {
@@ -81,7 +85,7 @@ sub yaml_header {
   $block->extend($line);
   if ($match_yaml_symbol) {
     if ( $btype eq "yaml" ) {
-      $self->upload( { add_empty_line => 1 } );
+      $self->upload( { add_empty_line => 0 } );
     }
     else {
       $block->update( { type => "yaml", attr => { wrap => 0 } } );
@@ -94,6 +98,7 @@ sub yaml_header {
 # Ordinary row processing
 sub normal_line {
   my ( $self, $line ) = @_;
+
   my $block = $self->{block};
   my $btype = $block->get("type");
 
@@ -109,7 +114,7 @@ sub normal_line {
     else {
       $self->upload( { add_empty_line => 1 } );
     }
-    return;
+    return 1;
   }
 
   $self->{block}->extend($line);
@@ -119,6 +124,9 @@ sub normal_line {
 # Pandoc div: :::
 sub pandoc_div {
   my ( $self, $line ) = @_;
+  my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+
   if ( $line =~ m/^[:]{3, }/ ) {
     $self->upload() unless $self->block_is_empty();
     $self->{block}->extend($line);
@@ -154,13 +162,14 @@ sub math {
   }
 
   # start
-  if ( $line =~ m/\s*(\$\$|\\\[)\s*$/ ) {
+  if ( $btype eq "normal" and $line =~ m/\s*(\$\$|\\\[)\s*$/ ) {
     $self->upload() unless $self->block_is_empty();
     $block->update(
       {
         text => $line,
         type => "math",
         attr => {
+          prefix         => $self->get("prefix"),
           wrap           => 0,
           add_empty_line => 0,
           marker         => $1 eq '$$' ? "markdown" : "latex",
@@ -190,7 +199,8 @@ sub code_block {
       return 1;
     }
 
-    my $block_text = $block->get("text") . $line;
+    $block->extend($line);
+    my $block_text = $block->get("text");
     $block_text =~ s/\h+\n/\n/g;
     $block_text =~ s/\A(\s*[`~]{3,}[^\n]*\n)(?:\s*\n)+/$1/;
     $block_text =~ s/(?:\n\s*)+(\n[`~]{3,}\s*\n+)\z/$1/;
@@ -221,17 +231,18 @@ sub code_block {
   }
 
   # start
-  if ( $line =~ m/^ (\s* [`~]{3,})/mxs ) {
+  if ( $btype eq "normal" and $line =~ m/^ (\s* [`~]{3,})/mxs ) {
     $self->upload() unless $self->block_is_empty();
     $block->update(
       {
         text => $line,
         type => "code",
         attr => {
+          prefix         => $self->get("prefix"),
           marker         => $1,
           wrap           => 0,
           empty          => 1,
-          add_empty_line => 1,
+          add_empty_line => 0,
         }
       }
     );
@@ -245,11 +256,12 @@ sub code_block {
 #  abc abc
 #  --- ---
 #  1   2
-#
 sub pandoc_table_simple {
   my ( $self, $line ) = @_;
+  my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+
   my $empty_line = ( $line !~ m/\S/ );
-  my $block      = $self->{block};
   my $tblock     = $block->get("type");
   my $mblock     = $block->get("marker");
 
@@ -276,9 +288,10 @@ sub pandoc_table_simple {
       {
         type => "table",
         attr => {
+          prefix         => $self->get("prefix"),
           marker         => "oneline",
           wrap           => 0,
-          add_empty_line => 1,
+          add_empty_line => 0,
         }
       }
     );
@@ -286,7 +299,7 @@ sub pandoc_table_simple {
     return 1;
   }
 
-  return 0;
+  return;
 }
 
 # pandoc table: multi and headless
@@ -299,6 +312,7 @@ sub pandoc_table_other {
 
   # start: special seperator line after empty line
   if (  $self->block_is_empty()
+    and $tblock eq "normal"
     and $line =~ m/^\s* [|]? \s* [:]? \s* [-]{3,} [:|\s-]* $/mxs )
   {
     $block->update(
@@ -306,9 +320,11 @@ sub pandoc_table_other {
         text => $line,
         type => "table",
         attr => {
+          prefix         => $self->get("prefix"),
           marker         => "pandoc-start",
           wrap           => 0,
           add_empty_line => 1,
+          empty          => 0,
         }
       }
     );
@@ -316,7 +332,10 @@ sub pandoc_table_other {
   }
 
   # end: empty line after special seperator line
-  if ( $tblock eq "table" and $mblock eq "pandoc-start" and $empty_line ) {
+  if (  $tblock eq "table"
+    and $mblock eq "pandoc-start"
+    and $empty_line )
+  {
     $block->update(
       {
         type => 'sepline',
@@ -332,7 +351,10 @@ sub pandoc_table_other {
     return 1;
   }
 
-  if ( $tblock eq "table" and $mblock eq "pandoc-sep" and $empty_line ) {
+  if (  $tblock eq "table"
+    and $mblock eq "pandoc-sep"
+    and $empty_line )
+  {
     $self->upload( { add_empty_line => 1 } );
     return 1;
   }
@@ -358,6 +380,7 @@ sub pandoc_table_other {
 #  | cde | dafe |
 sub simple_table_line {
   my ( $self, $line ) = @_;
+
   if ( is_table_line($line) ) {
     $self->upload() unless $self->block_is_empty();
     $self->{block}->extend($line);
@@ -416,6 +439,8 @@ sub header_setext {
 sub header_atx {
   my ( $self, $line ) = @_;
   my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+
   if ( ( is_header_line($line) // "" ) eq "Atx"
     and $self->block_is_empty() )
   {
@@ -440,9 +465,10 @@ sub header_atx {
 # Table rows and comment lines are output as is
 sub comment_line_as_sep {
   my ( $self, $line ) = @_;
-  if (  $self->{block}->get("type") eq "normal"
-    and $line =~ m/^\s* (?:\<!\-\-.*\-\-\>) \s*$/mxs )
-  {
+  my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+
+  if ( $line =~ m/^\s* (?:\<!\-\-.*\-\-\>) \s*$/mxs ) {
     $self->upload() unless $self->block_is_empty();
     $self->{block}->extend("$line");
     $self->upload( { wrap => 0, add_empty_line => 0 } );
@@ -557,115 +583,36 @@ sub adjust_tonewsboat_image {
 
 sub quote {
   my ( $self, $line ) = @_;
-  my ( $indent_num, $quote_level, $line_without_quote_symbol ) = ( 0, 0, q() );
-  if ( $line =~ m/\A ( \s* (\>+) ) [\s\n]* \z/xms ) {
-    $indent_num  = length($1);
-    $quote_level = length($2);
-    $line        = "$1\n";
-  }
-  elsif ( $line =~ m/\A ( \s* (\>+) (\h*) )/xms ) {
-    $indent_num  = length($1);
-    $quote_level = length($2);
-    if ( length($3) == 0 ) {
-      $line = substr( $line, 0, $indent_num ) . " " . substr( $line, $indent_num );
-      $indent_num += 1;
-    }
-  }
-  elsif ( $line =~ m/\A (\s+)/xms ) {
-    $indent_num = length($1);
-  }
-  $line_without_quote_symbol = substr( $line, $indent_num );
+  return if $line !~ m/\A\s*[>]/;
+  return if $self->{block}->get("type") ne "normal";
+  $self->upload();
 
-  my $block  = $self->{block};
-  my $tblock = $block->get("type");
-  my $mblock = $block->get("marker");
+  $line =~ s/\A\s+//;
+  my $prefix;
+  ( $prefix, $line ) = format_quote_line($line);
 
-  # end
-  if ( $tblock eq "quote" and $line !~ m/\S/ ) {
-    $self->upload( { add_empty_line => 1 } );
-    return 1;
+  $self->update_prefix( $self->get("prefix") . $prefix );
+  my $block = $self->{block};
+  $block->update( { attr => { prefix => $self->get("prefix") } } );
+  $block->extend($line) if $line ne "";
+
+  # callout title need in seperate line
+  if ( $line =~ m/\A \s* \[ \! [^\]\s]+ \] /xms ) {
+    $self->upload( { wrap => 0, add_empty_line => 0 } );
   }
 
-  # continue
-  if ( $tblock eq "quote" ) {
-    ## End of Quote
-    if ( $quote_level == 0 ) {
-      $block->extend( substr( $line, $indent_num ) );
-      return 1;
-    }
-
-    ## End of previous paragraph and start of new paragraph
-    if ( $line_without_quote_symbol !~ m/\S/ ) {
-      $self->upload( { add_empty_line => 0 } ) unless $self->block_is_empty();
-      $self->{block}->extend($line);
-      $self->upload( { wrap => 0 } );
-      $self->{block}->update(
-        {
-          type => "quote",
-          attr => { marker => $mblock, add_empty_line => 0, empty => 1 },
-        }
-      );
-    }
-    elsif ( $quote_level == $mblock ) {
-      return 1
-        if $self->line_can_sep_paragraph( $line_without_quote_symbol, substr( $line, 0, $indent_num ) );    # 引用里嵌套列表或引用
-      $block->extend( substr( $line, 0, $indent_num ) ) if $self->block_is_empty();
-      $block->extend($line_without_quote_symbol);
-    }
-    else {
-      $self->upload( { add_empty_line => 0 } );
-      $self->{block}->update(
-        {
-          text => $line,
-          type => "quote",
-          attr => {
-            wrap           => 1,
-            marker         => $quote_level,
-            add_empty_line => 0,
-            empty          => 0,
-          }
-        }
-      );
-    }
-
-    return 1;
-  }
-
-  # start
-  if ( $tblock ne "quote" and $quote_level > 0 ) {
-    $self->upload() unless $self->block_is_empty();
-
-    # callout title need in seperate line
-    if ( $line =~ m/\A \s* (\>+)  \s+ \[ \! [^\]\s]+ \] /xms ) {
-      $self->{block}->extend($line);
-      $self->upload( { wrap => 0, add_empty_line => 0 } );
-      $line = "";
-    }
-    $self->{block}->update(
-      {
-        type => "quote",
-        attr => {
-          marker         => $quote_level,
-          add_empty_line => 0,
-        }
-      }
-    );
-
-    $self->{block}->extend($line) if $line ne "";
-    return 1;
-  }
-
-  return;
+  return 1;
 }
 
 sub line_can_sep_paragraph {
-  my ( $self, $line, $prefix ) = @_;
-  $prefix //= "";
+  my ( $self, $line ) = @_;
+  my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+
   if ( is_list_first_line($line)
     || is_link_list($line)
     || is_definition_header($line) )
   {
-    $line = $prefix . $line;
     $line =~ s{ ^ (\s*) [-*+] \s}{$1 • }xms if $self->{tonewsboat};
     $self->upload() unless $self->block_is_empty();
     $self->{block}->extend($line);
@@ -673,6 +620,11 @@ sub line_can_sep_paragraph {
   }
 
   return;
+}
+
+sub update_prefix {
+  my ( $self, $value ) = @_;
+  $self->{prefix} = $value // "";
 }
 
 1;
