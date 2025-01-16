@@ -431,8 +431,7 @@ INNER:
     # line wrap are not allowed after the current letter
     # or the next character cannot be the start of a new line.
     if ( $char_attr eq "PUN_FORBIT_BREAK_AFTER"
-      || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE"
-      || ( any { $next_char eq $_ } q(,), qw(. ; ? !) ) )
+      || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE" )
     {
       _line_extend( $line, $word->{str}, $word->{len} );
       _line_extend( $line, $char,        $char_width );
