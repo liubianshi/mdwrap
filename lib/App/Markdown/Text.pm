@@ -76,13 +76,12 @@ sub _line_extend {
     $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
     $str_ref->{len} += ( $width - 1 );
   }
-
-  # elsif ( $char_attr eq "CJK"
-  #   and $str_ref->{str} =~ m/(?<![A-z0-9.)]) [*_][*_]* \s \z/xms )
-  # {
-  #   $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
-  #   $str_ref->{len} += ( $width - 1 );
-  # }
+  elsif ( ( $char_attr eq "CJK" and $str_ref->{str} =~ m/[A-z0-9.)][*_]+\z/xms )
+    or ( $str_attr eq "CJK" and $char =~ m/[*_]+[A-z0-9.(]/ ) )
+  {
+    $str_ref->{str} .= " $char";
+    $str_ref->{len} += ( $width + 1 );
+  }
   elsif ( any { $char_first eq $_ } ("]")
     and $char_last eq " "
     and defined substr( $str_ref->{str}, -2, 1 )
