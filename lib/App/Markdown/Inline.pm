@@ -5,6 +5,9 @@ use warnings;
 use utf8;
 use Data::Dump      qw(dump);
 use Text::CharWidth qw(mbswidth mblen mbwidth);
+
+use App::Markdown::Utils qw(_char_attr);
+
 use Exporter 'import';
 our @EXPORT_OK = qw(get_syntax_meta);
 
