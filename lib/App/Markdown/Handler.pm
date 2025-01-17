@@ -195,7 +195,6 @@ sub code_block {
     and $1 eq $bmarker )
   {
     if ( $block->get("empty") ) {
-      $block->upload();
       return 1;
     }
 
@@ -223,17 +222,14 @@ sub code_block {
       );
     }
     $block->extend($line);
-    if ( $block->get("empty") and ( $line !~ m/\S/ or $line =~ m/^\s*\d+[.]?\s*$/ ) ) {
-      $block->update( { attr => { empty => 1 } } );    # extend 时，会自动工薪 empty 属性，因此需要复位
-    }
 
     return 1;
   }
 
   # start
   if ( $btype eq "normal" and $line =~ m/^ (\s* [`~]{3,})/mxs ) {
-    $self->upload() unless $self->block_is_empty();
-    $block->update(
+    $self->upload( { add_empty_line => 1 } ) unless $self->block_is_empty();
+    $self->{block}->update(
       {
         text => $line,
         type => "code",

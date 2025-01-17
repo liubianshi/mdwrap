@@ -5,10 +5,10 @@ use warnings;
 use Data::Dump qw(dump);
 use Exporter 'import';
 use utf8;
-use Text::CharWidth         qw(mbswidth mblen mbwidth);
-use List::Util              qw(any none);
-use App::Markdown::Conceals qw(concealed_chars);
+use Text::CharWidth qw(mbswidth mblen mbwidth);
+use List::Util      qw(any none);
 use open ':std', ':encoding(UTF-8)';
+use App::Markdown::Inline qw(get_syntax_meta);
 
 our @EXPORT_OK = qw(wrap set_environemnt_variable);
 
@@ -16,75 +16,6 @@ my $LINE_WIDTH       = 80;
 my $SPACE            = " ";
 my $NEW_LINE         = "\n";
 my $SEPERATOR_SYMBOL = "┄";
-
-my $special_syntax = {
-  '`' => {
-    start => sub {
-      my $arg       = shift;
-      my $char      = $arg->{char};
-      my $left_char = $arg->{left};
-      return ( $char eq "`" and $left_char ne "\\" );
-    },
-    end => sub {
-      my $arg       = shift;
-      my $char      = $arg->{char};
-      my $left_char = $arg->{left};
-      my $cap       = $arg->{cap};
-      return ( $char eq "`" and $left_char ne "\\" );
-    },
-  },
-  '$' => {
-    start => sub {
-      my $arg       = shift;
-      my $char      = $arg->{char};
-      my $left_char = $arg->{left};
-      return ( $char eq '$' and $left_char ne "\\" );
-    },
-    end => sub {
-      my $arg       = shift;
-      my $char      = $arg->{char};
-      my $left_char = $arg->{left};
-      return ( $char eq '$' and $left_char ne "\\" );
-    },
-  },
-  '@' => {
-    start => sub {
-      my $arg       = shift;
-      my $char      = $arg->{char};
-      my $left_char = $arg->{left};
-      return ( $char eq "@" and ( $left_char =~ /^\s*$/ || _char_attr( ord $left_char ) ne "OTHER" ) );
-    },
-    end => sub {
-      my $arg    = shift;
-      my $str    = ${ $arg->{str_ref} };
-      my $pos    = $arg->{pos};
-      my $char_r = substr( $str, $pos, 1 );
-      return (any { $char_r eq $_ } ( "", $SPACE, $NEW_LINE, split( //, '],:;' ) )
-          and any { _char_attr( ord $char_r ) eq $_ } qw(CJK_PUN PUN_FORBIT_BREAK_BEFORE PUN_FORBIT_BREAK_AFTER) );
-    }
-  },
-  '[' => [
-    {
-      start => sub {
-        my $arg   = shift;
-        my $str   = ${ $arg->{str_ref} };
-        my $pos   = $arg->{pos};
-        my $no_rB = qr/(?:[^\]]|\\\])/;
-        my $no_rb = qr/(?:[^)]|\\\))/;
-        return substr( $str, $pos - 1 ) =~ m/^\[$no_rB*\]\($no_rb*\)/;
-      },
-      end => sub {
-        my $arg       = shift;
-        my $char      = $arg->{char};
-        my $left_char = $arg->{left};
-        my $cap       = $arg->{cap};
-        my $no_rB     = qr/(?:[^\]]|\\\])/;
-        my $no_rb     = qr/(?:[^)]|\\\))/;
-        return ( $char eq ')' and $left_char ne '\\' and $cap =~ m/^\[${no_rB}*\]\(${no_rb}*\)$/ );
-      }
-    }
-  ],
-};
 
 sub set_environemnt_variable {
   my $opt = shift;
@@ -102,7 +33,7 @@ sub _string_init {
 sub _line_extend {
   my ( $str_ref, $char, $width, $opt_ref ) = @_;
   $width //= mbswidth($char);
-  return $str_ref if $width == 0;
+  return $str_ref if $width == 0 and $char eq "";
 
   # No additional processing is done when splicing characters
   if ( defined $opt_ref and defined $opt_ref->{noprocess} ) {
@@ -145,12 +76,13 @@ sub _line_extend {
     $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
     $str_ref->{len} += ( $width - 1 );
   }
-  elsif ( $char_attr eq "CJK"
-    and $str_ref->{str} =~ m/(?<![A-z0-9.)]) [*_][*_]* \s \z/xms )
-  {
-    $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
-    $str_ref->{len} += ( $width - 1 );
-  }
+
+  # elsif ( $char_attr eq "CJK"
+  #   and $str_ref->{str} =~ m/(?<![A-z0-9.)]) [*_][*_]* \s \z/xms )
+  # {
+  #   $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
+  #   $str_ref->{len} += ( $width - 1 );
+  # }
   elsif ( any { $char_first eq $_ } ("]")
     and $char_last eq " "
     and defined substr( $str_ref->{str}, -2, 1 )
@@ -317,12 +249,6 @@ sub remaining_space {
     $nl = _line_extend( $nl, $c->{str}, $c->{len} );
     $lw = $nl->{len};
     $rm = cal_remaining_space( $l->{len}, $lw );
-
-    # 当行长不够时，考虑 conceal 后再进行比较
-    if ( $rm <= 0 ) {
-      $lw = $lw - concealed_chars( $nl->{str} );
-      $rm = cal_remaining_space( $l->{len} - concealed_chars( $l->{str} ), $lw );
-    }
   }
 
   return $rm;
@@ -355,6 +281,8 @@ sub wrap {
   my $line  = _string_init();
   my $word  = _string_init();
   my ( $char, $char_width, $char_attr, $next_char, $next_char_attr );
+  my $inline_syntax     = get_syntax_meta();
+  my $inline_syntax_end = {};
 
 INNER:
   while ( $pos < $oritext_len ) {
@@ -369,53 +297,136 @@ INNER:
       last INNER;
     }
 
-    my $prefix_char = $pos > 0 ? substr( $oritext, $pos - 1, 1 ) : undef;
+    my $prefix_char = $pos > 1 ? substr( $oritext, $pos - 2, 1 ) : undef;
     $next_char = substr( $oritext, $pos, 1 );
-    if ( defined $special_syntax->{$char} ) {
-      my $handlers = $special_syntax->{$char};
-      $handlers = [$handlers] unless ref $handlers eq ref [];
-      my $args = { char => $char, left => $prefix_char, str_ref => \$oritext, pos => $pos, cap => $word->{str} };
-      for my $handler ( @{$handlers} ) {
-        if ( $handler->{start}->($args) ) {
 
-          # 先将单词的内容清空，因为没有引入新字符，所以不用考虑折行的问题
-          _line_extend( $line, $word->{str}, $word->{len} );
-          $word = _string_init( $char, $char_width );
+    # 先考虑结束的情况
+    my $syn_end = $inline_syntax_end->{$char};
+    if ( defined $syn_end and scalar @{$syn_end} > 0 ) {
+      $syn_end = [$syn_end] if ref $syn_end ne ref [];
+      my $arg = {
+        char    => $char,
+        left    => $prefix_char,
+        right   => $next_char,
+        str_ref => \$oritext,
+        pos     => $pos,
+        cap     => $word->{str}
+      };
+      for my $i ( 0 .. ( scalar( @{$syn_end} ) - 1 ) ) {
+        my $m = $syn_end->[$i]->($arg);
+        next unless defined $m;
 
-          # 捕获特殊语法覆盖的字符，直到满足结束条件，结束时的当前字符需在语法覆盖范围内
-          # 使用 do ... while () 结构，主要是希望至少能被执行一次
-          do {
-            $prefix_char = $char;
-            ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
-            $next_char = substr( $oritext, $pos, 1 );
+        # 结束条件一旦满足，就需要从中删除
+        splice( @{$syn_end}, $i, 1 );
 
-            # 换行符需要根据上下文处理
-            if ( $char eq $NEW_LINE ) {
-              update_when_new_line( \$oritext, substr( $word->{str}, -1 ), \$char, \$pos, \$next_char );
-              $char_width = $char eq "" ? 0 : 1;
-            }
-            _word_extend( $word, $char, $char_width ) if $char ne "";
+        _word_extend( $word, $char, $char_width ) if $char ne "";
+        my $end_len = $m->{end_len} // 1;
+        for ( 1 .. ( $end_len - 1 ) ) {
+          ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
+          _word_extend( $word, $char, $char_width ) if $char ne "";
+        }
+        $word->{len} -= ( $m->{conceal} // 0 );
 
-            # 更新结束探针所需的参数
-            $args = { char => $char, left => $prefix_char, str_ref => \$oritext, pos => $pos, cap => $word->{str} };
-          } while ( not $handler->{end}->($args) and $pos < $oritext_len );
+        last;
+      }
 
-          # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
-          # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
-          wrap_line( \@lines, $line, $word ) and $line = _string_init($prefix_other);
-          _line_extend( $line, $word->{str}, $word->{len} );
-          $word = _string_init();
+      # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
+      # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
+      wrap_line( \@lines, $line, $word ) and $line = _string_init($prefix_other);
 
-          # 如果光标已经移到字符串末尾，那么结束整个循环
-          if ( $pos >= $oritext_len ) {
-            push @lines, $line->{str} if $line->{len} > 0;
-            last INNER;
-          }
+      _line_extend( $line, $word->{str}, $word->{len} );
+      $word = _string_init();
 
-          # 一个字符可能时多个语法结构的起始字符，只要满足一个，就消耗掉该字符，不再考虑后续的语法
-          # 只要满足特殊语法，那么该字符就会以特殊语法处理
+      next INNER;
+    }
+
+    # 考虑行内语法开始的情况
+    my $syn = $inline_syntax->{$char};
+    if ( defined $syn ) {
+      $syn = ref $syn eq ref [] ? $syn : [$syn];
+      my $arg = {
+        char    => $char,
+        left    => $prefix_char,
+        right   => $next_char,
+        str_ref => \$oritext,
+        pos     => $pos,
+      };
+      for my $handler ( @{$syn} ) {
+        my $m = $handler->($arg);
+        next unless defined $m;
+
+        # 先将单词的内容清空，因为没有引入新字符，所以不用考虑折行的问题
+        _line_extend( $line, $word->{str}, $word->{len} );
+        $word = _string_init();
+
+        # 处理行内语法的起始标记
+        _word_extend( $word, $char, $char_width ) if $char ne "";
+        my $start_len = $m->{start_len} // 1;
+        for ( 1 .. ( $start_len - 1 ) ) {
+          ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
+          _word_extend( $word, $char, $char_width ) if $char ne "";
+        }
+        $word->{len} -= ( $m->{conceal} // 0 );
+
+        # 对于那些允许跨行的行内语法，像普通字符那样处理即可
+        # 但需要记录结束条件，后进先出
+        if ( $m->{wrap} ) {
+          $inline_syntax_end->{ $m->{endchar} } //= [];
+          unshift @{ $inline_syntax_end->{ $m->{endchar} } }, $m->{endprobe};
           next INNER;
         }
+
+        # 捕获特殊语法覆盖的字符，直到满足结束条件，结束时的当前字符需在语法覆盖范围内
+        while ( $pos < $oritext_len ) {
+          $prefix_char = $char;
+          ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
+          $next_char = substr( $oritext, $pos, 1 );
+
+          # 换行符需要根据上下文处理
+          if ( $char eq $NEW_LINE ) {
+            update_when_new_line( \$oritext, substr( $word->{str}, -1 ), \$char, \$pos, \$next_char );
+            $char_width = $char eq "" ? 0 : 1;
+          }
+          _word_extend( $word, $char, $char_width ) if $char ne "";
+
+          # 更新结束探针所需的参数
+          $arg = {
+            char    => $char,
+            left    => $prefix_char,
+            right   => $next_char,
+            str_ref => \$oritext,
+            pos     => $pos,
+            cap     => $word->{str}
+          };
+          my $end_info = $m->{endprobe}->($arg);
+
+          next if not defined $end_info;
+
+          # 达到结束条件时，考虑 conceal, 以及结束标记的数目
+          my $end_len = $end_info->{end_len} // 1;
+          for ( 1 .. ( $end_len - 1 ) ) {
+            ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
+            _word_extend( $word, $char, $char_width ) if $char ne "";
+          }
+          $word->{len} -= ( $end_info->{conceal} // 0 );
+          last;
+        }
+
+        # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
+        # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
+        wrap_line( \@lines, $line, $word ) and $line = _string_init($prefix_other);
+        _line_extend( $line, $word->{str}, $word->{len} );
+        $word = _string_init();
+
+        # 如果光标已经移到字符串末尾，那么结束整个循环
+        if ( $pos >= $oritext_len ) {
+          push @lines, $line->{str} if $line->{len} > 0;
+          last INNER;
+        }
+
+        # 一个字符可能时多个语法结构的起始字符，只要满足一个，就消耗掉该字符，不再考虑后续的语法
+        # 只要满足特殊语法，那么该字符就会以特殊语法处理
+        next INNER;
       }
     }
 

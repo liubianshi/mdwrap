@@ -114,6 +114,7 @@ sub run {
 
     next if $handler->normal_line($_);
   }
+
   $handler->upload() unless $handler->block_is_empty();
 
   @contents = map { $_->tostring() } @{ $handler->get("blocks") };

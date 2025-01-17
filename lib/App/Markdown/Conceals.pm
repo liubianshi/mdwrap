@@ -38,7 +38,7 @@ my @CONCEALS = (
     regex   => qr/\[($rB*)\]\($rb*\)/,
     display => sub {
       my $cap = shift or return "";
-      $cap =~ s/\[(${rB}*)\]\(${rb}*\)/$1/;
+      $cap =~ s/\[(${rB}*)\]\(${rb}*\)/  $1/;
       return $cap;
     },
   },
