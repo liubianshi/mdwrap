@@ -29,7 +29,8 @@ sub is_header_line {
 
 sub is_list_first_line {
   my $str = shift;
-  return scalar( $str =~ m/^ \s* (?:[-•*+]|\d+\.) \s/mxs );
+  return 1 if $str =~ m/^ \s* (?:[-•*+]|\d+\.) \s/mxs;
+  return 0;
 }
 
 sub is_link_list {

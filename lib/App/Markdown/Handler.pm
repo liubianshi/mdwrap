@@ -603,7 +603,7 @@ sub quote {
 sub line_can_sep_paragraph {
   my ( $self, $line ) = @_;
   my $block = $self->{block};
-  return if $block->get("type") ne "normal";
+  return if $block->get("type") ne "normal" and $block->get("type") ne "list";
 
   if ( is_list_first_line($line)
     || is_link_list($line)
@@ -611,6 +611,7 @@ sub line_can_sep_paragraph {
   {
     $line =~ s{ ^ (\s*) [-*+] \s}{$1 • }xms if $self->{tonewsboat};
     $self->upload() unless $self->block_is_empty();
+    $self->{block}->update( { type => "list" } );
     $self->{block}->extend($line);
     return 1;
   }

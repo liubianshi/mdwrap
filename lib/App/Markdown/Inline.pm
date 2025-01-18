@@ -11,22 +11,39 @@ use App::Markdown::Utils qw(_char_attr);
 use Exporter 'import';
 our @EXPORT_OK = qw(get_syntax_meta);
 
+my %RE = (
+  not_right_bracket => qr/(?: [^\]] | \\\] )/x,
+  not_right_par     => qr/(?: [^)]  | \\\) )/x,
+  balance_star      => qr/
+    (?<SYN>[*]{1,3}) (?!\s)
+    (?: [^*] | \\[*] )+
+    (?<!\s)\g{SYN}
+  /xms,
+);
+
 my $syntax = {
   '`' => sub {
     my $arg       = shift;
-    my $char      = $arg->{char};
+    my $str       = ${ $arg->{str_ref} };
+    my $pos       = $arg->{pos};
     my $left_char = $arg->{left};
-    return if $char ne "`" or $left_char eq "\\";
+    return if $left_char eq "`" or $left_char eq "\\";
+    return if substr( $str, $pos - 1 ) !~ m{
+      \A (
+        [`]
+        (?: [^`] | \\[`])+
+        (?<!\\)[`](?![`])
+      )
+    }xms;
+    my $matched = $1;
+    my $end_pos = $pos + length($matched) - 1;
     return {
       wrap     => 1,
       conceal  => 1,
       endchar  => "`",
       endprobe => sub {
-        my $arg       = shift;
-        my $char      = $arg->{char};
-        my $left_char = $arg->{left};
-        my $cap       = $arg->{cap};
-        return if $char ne "`" or $left_char eq "\\";
+        my $arg = shift;
+        return if $arg->{pos} != $end_pos;
         return { conceal => 1 };
       }
     };
@@ -37,50 +54,64 @@ my $syntax = {
     my $pos       = $arg->{pos};
     my $char      = $arg->{char};
     my $left_char = $arg->{left} // "";
-    return if $left_char eq "\\";
-    if ( substr( $str, $pos - 1 ) =~ m/^([*]{1,3})[^*]+\1/ ) {
-      my $match = $1;
-      return {
-        wrap      => 1,
-        start_len => length($match),
-        conceal   => length($match),
-        endchar   => "*",
-        endprobe  => sub {
-          my $arg       = shift;
-          my $left_char = $arg->{left};
-          my $str       = ${ $arg->{str_ref} };
-          my $pos       = $arg->{pos};
-          return if $left_char eq "\\";
-          return if substr( $str, $pos - 1, length($match) ) ne $match;
-          return { end_len => length($match), conceal => length($match) };
-        }
-      };
-    }
+    return if $left_char eq "\\" or $left_char eq '*';
+    return if substr( $str, $pos - 1 ) !~ m{
+      \A (
+        ([*]{1,3}) (?![\s*])
+        (?: [^*] | \\[*] | $RE{balance_star} )+?
+        (?<!\s)\2
+      )
+    }xms;
+    my ( $matched, $symbol ) = ( $1, $2 );
+    my $end_pos = $pos + length($matched) - 1;
+    return {
+      wrap      => 1,
+      start_len => length($symbol),
+      conceal   => length($symbol),
+      endchar   => "*",
+      endprobe  => sub {
+        my $arg = shift;
+        return if $arg->{pos} != $end_pos - ( length($symbol) - 1 );
+        return {
+          end_len => length($symbol),
+          conceal => length($symbol)
+        };
+      }
+    };
   },
   '$' => sub {
     my $arg       = shift;
-    my $char      = $arg->{char};
+    my $str       = ${ $arg->{str_ref} };
+    my $pos       = $arg->{pos};
     my $left_char = $arg->{left};
-    return if $char ne "`" or $left_char eq "\\";
+    return if $left_char eq "\\" and $left_char ne '$';
+    return if substr( $str, $pos - 1 ) !~ m{
+      \A (
+        \$
+        (?: [^\$] | \\\$)+
+        (?<!\\)\$(?!\$)
+      )
+    }xms;
+    my $matched = $1;
+    my $end_pos = $pos + length($matched) - 1;
     return {
       wrap     => 1,
-      conceal  => 1,
+      conceal  => 0,
       endchar  => '$',
       endprobe => sub {
-        my $arg       = shift;
-        my $char      = $arg->{char};
-        my $left_char = $arg->{left};
-        my $cap       = $arg->{cap};
-        return if $char ne '$' or $left_char eq "\\";
-        return { conceal => 1 };
+        my $arg = shift;
+        return if $arg->{pos} != $end_pos;
+        return { conceal => 0 };
       }
     };
   },
   '@' => sub {
-    my $arg       = shift;
-    my $char      = $arg->{char};
-    my $left_char = $arg->{left};
-    return if $char ne "@" or ( $left_char !~ /^\s*$/ and _char_attr( ord $left_char ) eq "OTHER" );
+    my $arg        = shift;
+    my $pos        = $arg->{pos};
+    my $left_char  = $arg->{left};
+    my $right_char = $arg->{right};
+    return if $left_char eq "\\" or ( $left_char =~ /\S/ and _char_attr( ord $left_char ) eq "OTHER" );
+    return if $right_char = m/[@\s\n]/;
     return {
       conceal  => 0,
       wrap     => 0,
@@ -104,55 +135,50 @@ my $syntax = {
 
     # extneal link
     sub {
-      my $arg   = shift;
-      my $str   = ${ $arg->{str_ref} };
-      my $pos   = $arg->{pos};
-      my $no_rB = qr/(?:[^\]]|\\\])/;
-      my $no_rb = qr/(?:[^)]|\\\))/;
-      return if not substr( $str, $pos - 1 ) =~ m/^\[$no_rB*\]\($no_rb*\)/;
+      my $arg = shift;
+      my $str = ${ $arg->{str_ref} };
+      my $pos = $arg->{pos};
+      return if $arg->{left} eq "\\";
+      return if not substr( $str, $pos - 1 ) =~ m{ \A (
+        \[ ($RE{not_right_bracket}*) (?<!\])\]
+        \s*
+        \( $RE{not_right_par}* (?<!\\) \)
+      )}xms;
+      my ( $matched, $display ) = ( $1, $2 );
+      my $concealed_char_number = mbswidth($matched) - ( mbswidth($display) + 2 );
+      my $end_pos               = $pos + length($matched) - 1;
       return {
         conceal  => 0,
         wrap     => 0,
         endprobe => sub {
-          my $arg       = shift;
-          my $char      = $arg->{char};
-          my $left_char = $arg->{left};
-          my $cap       = $arg->{cap};
-          my $no_rB     = qr/(?:[^\]]|\\\])/;
-          my $no_rb     = qr/(?:[^)]|\\\))/;
-          return if $char ne ')' or $left_char eq '\\';
-
-          if ( $cap =~ m/^\[(${no_rB}*)\]\(${no_rb}*\)$/ ) {
-            return { conceal => mbswidth($cap) - ( mbswidth($1) + 2 ) };
-          }
-          return;
+          my $arg = shift;
+          return if $arg->{pos} != $end_pos;
+          return { conceal => $concealed_char_number };
         }
       };
     },
 
     # winki link
     sub {
-      my $arg   = shift;
-      my $str   = ${ $arg->{str_ref} };
-      my $pos   = $arg->{pos};
-      my $no_rB = qr/(?:[^\]]|\\\])/;
-      return if not substr( $str, $pos - 1 ) =~ m/^\[\[$no_rB*\]\]/;
+      my $arg = shift;
+      my $str = ${ $arg->{str_ref} };
+      my $pos = $arg->{pos};
+      return if $arg->{left} eq "\\";
+      return if not substr( $str, $pos - 1 ) =~ m{
+        \A (
+          \[\[ ($RE{not_right_bracket}*) (?<!\])\]\]
+        )
+      }mxs;
+      my ( $matched, $display ) = ( $1, $2 );
+      my $concealed_char_number = mbswidth($matched) - ( mbswidth($display) + 2 );
+      my $end_pos               = $pos + length($matched) - 1;
       return {
         conceal  => 0,
         wrap     => 0,
         endprobe => sub {
-          my $arg       = shift;
-          my $char      = $arg->{char};
-          my $left_char = $arg->{left};
-          my $next_char = $arg->{right};
-          my $cap       = $arg->{cap};
-          my $no_rB     = qr/(?:[^\]]|\\\])/;
-          return if $char ne ']' or $left_char eq '\\';
-
-          if ( $cap =~ m/^\[{2}(${no_rB}*)\]{2}$/ ) {
-            return { conceal => mbswidth($cap) - ( mbswidth($1) + 2 ) };
-          }
-          return;
+          my $arg = shift;
+          return if $arg->{pos} != $end_pos;
+          return { conceal => $concealed_char_number };
         }
       };
     },
@@ -163,23 +189,24 @@ my $syntax = {
       my $str   = ${ $arg->{str_ref} };
       my $pos   = $arg->{pos};
       my $no_rB = qr/(?:[^\]]|\\\])/;
-      return if not substr( $str, $pos - 1 ) =~ m/^\[$no_rB*\]\[$no_rB+\]/;
+      return if $arg->{left} eq "\\";
+      return if not substr( $str, $pos - 1 ) =~ m{
+        \A (
+          \[ $RE{not_right_bracket}* (?!\\)\]
+          \s*
+          \[ $RE{not_right_bracket}+ (?!\\)\]
+        )
+      };
+      my ( $matched, $display ) = ( $1, $2 );
+      my $concealed_char_number = mbswidth($matched) - ( mbswidth($display) + 2 );
+      my $end_pos               = $pos + length($matched) - 1;
       return {
         conceal  => 0,
         wrap     => 0,
         endprobe => sub {
-          my $arg       = shift;
-          my $char      = $arg->{char};
-          my $left_char = $arg->{left};
-          my $next_char = $arg->{right};
-          my $cap       = $arg->{cap};
-          my $no_rB     = qr/(?:[^\]]|\\\])/;
-          return if $char ne ']' or $left_char eq '\\';
-
-          if ( $cap =~ m/^\[($no_rB*)\]\[$no_rB+\]$/ ) {
-            return { conceal => mbswidth($cap) - ( mbswidth($1) + 2 ) };
-          }
-          return;
+          my $arg = shift;
+          return if $arg->{pos} != $end_pos;
+          return { conceal => $concealed_char_number };
         }
       };
     }
