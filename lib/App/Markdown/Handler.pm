@@ -227,7 +227,7 @@ sub code_block {
   }
 
   # start
-  if ( $btype eq "normal" and $line =~ m/^ (\s* [`~]{3,})/mxs ) {
+  if ( ( $btype eq "normal" or $btype eq "list" ) and $line =~ m/^ (\s* [`~]{3,})/mxs ) {
     $self->upload( { add_empty_line => 1 } ) unless $self->block_is_empty();
     $self->{block}->update(
       {
