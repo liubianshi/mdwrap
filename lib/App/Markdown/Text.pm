@@ -357,10 +357,13 @@ INNER:
     # line wrap are not allowed after the current letter
     # or the next character cannot be the start of a new line.
     if ( $char_attr eq "PUN_FORBIT_BREAK_AFTER"
-      || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE" )
+      || $char_attr eq "PUN_FORBIT_BREAK_BEFORE"
+      || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE"
+      || grep { $_ eq $next_char or $_ eq $char } split( //, ",.!" ) )
+
     {
       _line_extend( $line, $word->{str}, $word->{len} );
-      _line_extend( $line, $char,        $char_width );
+      _line_extend( $line, $char, $char_width, { noprocess => 1 } );
       $word = _string_init();
       next INNER;
     }
