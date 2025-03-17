@@ -158,7 +158,7 @@ my $syntax = {
       };
     },
 
-    # winki link
+    # wiki link
     sub {
       my $arg = shift;
       my $str = ${ $arg->{str_ref} };
@@ -170,6 +170,9 @@ my $syntax = {
         )
       }mxs;
       my ( $matched, $display ) = ( $1, $2 );
+      if ( $display =~ m/(?<!\\)\|\s*(.+)/ ) {
+        $display = $1;
+      }
       my $concealed_char_number = mbswidth($matched) - ( mbswidth($display) + 2 );
       my $end_pos               = $pos + length($matched) - 1;
       return {
