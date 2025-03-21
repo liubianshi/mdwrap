@@ -15,15 +15,19 @@ our @EXPORT_OK = qw(
   indent
 );
 
+# 判断是否为Markdown表格行
+# 匹配以竖线(|)或表格分隔线(+---)开头的行
 sub is_table_line {
   my $str = shift;
-  return 1 if $str =~ m{^\s*(\||\+[-=])}xms;
-  return 0;
+  return $str =~ m{^\s*(\||\+[-=])}xms;
 }
 
+# 判断是否为Markdown标题行
+# 返回类型："Setext"（下划线式标题）、"Atx"（井号式标题）或undef
 sub is_header_line {
-  return "Setext" if m/^ \s* (?:\={3,}|\-{3,}) \s* $/mxs;
-  return "Atx"    if m/^ \s* [#]+ \s+/mxs;
+  my $str = shift;
+  return "Setext" if $str =~ m/^ \s* (?:\={3,}|\-{3,}) \s* $/mxs;    # 匹配 === 或 ---
+  return "Atx"    if $str =~ m/^ \s* [#]+ \s+/mxs;                   # 匹配 # 标题
   return;
 }
 
@@ -48,42 +52,89 @@ sub is_code_block {
   return $str =~ m/\A\h{4}/;
 }
 
+# 计算字符串的缩进前缀
+# 处理以下情况：
+# 1. 普通缩进空格
+# 2. 引用块前缀（>）
+# 3. 列表项前缀（*, - 等）
+# 4. 定义列表前缀（:）
 sub indent {
-  my $str         = shift;
-  my $prefix      = "";
-  my $todo_regex  = qr/\[\w?\]\s+/xms;
-  my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:$todo_regex\s)?/xms;
-  my $def_regex   = qr/(?:\: \s+)/xms;
-  my $quote_regex = qr/(?:\>\s)+/;
-  if ( $str =~ m{\A  (\s*) ($quote_regex?) ((?:$list_regex|$def_regex)?) }mxs ) {
+  my $str = shift;
+
+  # 定义各类前缀的正则表达式
+  my $todo_regex  = qr/\[\w?\]\s+/xms;                                 # 匹配待办项如 [x]
+  my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:$todo_regex\s)?/xms;    # 列表项
+  my $def_regex   = qr/(?:\: \s+)/xms;                                 # 定义列表
+  my $quote_regex = qr/(?:\>\s)+/xms;                                  # 引用块
+
+  # 组合匹配模式
+  my $prefix = "";
+  if (
+    $str =~ m{\A
+    (\s*)                     # 基础缩进空格
+    ($quote_regex?)           # 引用标记
+    ((?:$list_regex|$def_regex)?)  # 列表或定义标记
+  }xms
+    )
+  {
+    # 组合前缀：缩进 + 引用标记 + 列表/定义标记的等效空格
     $prefix = $1 . $2 . ( " " x length($3) );
   }
   return $prefix;
 }
 
+# 格式化引用块行
+# 返回值：(前缀, 内容)
+# 处理规则：
+# 1. 连续的 > 转换为带空格的引用前缀
+# 2. 引用符号后的4个空格转换为引用层级的缩进
 sub format_quote_line {
-  my $line               = shift;
-  my $prefix             = "";
-  my $continue_space_num = 0;
+  my ($input_line) = @_;
+  my $quote_prefix = "";
+  my $space_count  = 0;
+  my $cursor_pos   = 0;
 
-  for my $i ( 0 .. length($line) ) {
-    my $char = substr( $line, $i, 1 );
-    if ( $char eq ">" ) {
-      $prefix .= "> ";
-      $continue_space_num = 0;
+  # 遍历行首的引用标记和空格
+  for ( ; $cursor_pos < length($input_line); $cursor_pos++ ) {
+    my $current_char = substr( $input_line, $cursor_pos, 1 );
+
+    # 处理引用标记
+    if ( $current_char eq '>' ) {
+      $quote_prefix .= "> ";    # 标准化引用前缀格式
+      $space_count = 0;         # 重置空格计数器
+      next;
     }
-    elsif ( $char =~ m/\h/ ) {
-      $continue_space_num++;
+
+    # 统计连续空格（仅处理水平空白符）
+    if ( $current_char =~ /\h/ ) {
+      $space_count++;
+      next;
     }
-    else {
-      $line = substr( $line, $continue_space_num >= 4 ? $i - 4 : $i );
-      last;
-    }
+
+    # 遇到非空白字符时结束解析
+    last;
   }
 
-  return ( $prefix, $line );
+  # 处理Markdown的4空格缩进规则
+  if ( $space_count >= 4 ) {
+    $quote_prefix .= " " x 4;    # 将4空格转换为缩进
+    $cursor_pos -= 4;            # 调整光标位置
+  }
+
+  # 截取剩余内容（排除已处理的前缀部分）
+  my $content = substr( $input_line, $cursor_pos );
+
+  return ( $quote_prefix, $content );
 }
 
+# 判断字符的排版属性（内部使用）
+# 参数：字符的Unicode码点
+# 返回值：
+#   PUN_FORBIT_BREAK_AFTER - 禁止在此符号后换行
+#   PUN_FORBIT_BREAK_BEFORE - 禁止在此符号前换行
+#   CJK_PUN - 中日韩标点符号
+#   CJK - 中日韩统一表意文字
+#   OTHER - 其他字符
 sub _char_attr {
   my $u                               = shift;
   my @punctuations_forbit_break_after = (
@@ -135,37 +186,32 @@ sub _char_attr {
     if any { $u == $_ } @punctuations_forbit_break_after;
   return "PUN_FORBIT_BREAK_BEFORE"
     if any { $u == $_ } @punctuations_forbit_break_before;
+
+  # 中日韩标点符号范围
   return "CJK_PUN"
     if (
-      ( $u >= 0x3000 and $u <= 0x303F ) or    # CJK Symbols and Punctuation
-      ( $u >= 0xFF00 and $u <= 0xFFEF ) or    # Halfwidth and Fullwidth Forms
-      ( $u >= 0xFE50 and $u <= 0xFE6F )       # Small Form Variants
+      ( $u >= 0x3000 && $u <= 0x303F ) ||    # CJK符号和标点
+      ( $u >= 0xFF00 && $u <= 0xFFEF ) ||    # 半角/全角形式
+      ( $u >= 0xFE50 && $u <= 0xFE6F )       # 小写变体
     );
+
+  # 中日韩统一表意文字范围
   return "CJK"
     if (
-      ( $u >= 0x4E00 and $u <= 0x9FFF ) or    # CJK Unified Ideographs
-      ( $u >= 0x3400 and $u <= 0x4DBF )
-      or                                      # CJK Unified Ideographs Extension A
-      ( $u >= 0x20000 and $u <= 0x2A6DF )
-      or                                      # CJK Unified Ideographs Extension B
-      ( $u >= 0x2A700 and $u <= 0x2B73F )
-      or                                      # CJK Unified Ideographs Extension C
-      ( $u >= 0x2B740 and $u <= 0x2B81F )
-      or                                      # CJK Unified Ideographs Extension D
-      ( $u >= 0x2B820 and $u <= 0x2CEAF )
-      or                                      # CJK Unified Ideographs Extension E
-      ( $u >= 0x2CEB0 and $u <= 0x2EBEF )
-      or                                      # CJK Unified Ideographs Extension F
-      ( $u >= 0x30000 and $u <= 0x3134F )
-      or                                      # CJK Unified Ideographs Extension G
-      ( $u >= 0x31350 and $u <= 0x323AF )
-      or                                      # CJK Unified Ideographs Extension H
-      ( $u >= 0xF900 and $u <= 0xFAFF ) or    # CJK Compatibility Ideographs
-      ( $u >= 0x3100 and $u <= 0x312f ) or    # Bopomofo
-      ( $u >= 0x31a0 and $u <= 0x31bf ) or    # Bopomofo Extended
-      (     $u >= 0x2F800
-        and $u <= 0x2FA1F )                   # CJK Compatibility Ideographs Supplement
-       );
+      ( $u >= 0x4E00  and $u <= 0x9FFF )  or    # CJK Unified Ideographs
+      ( $u >= 0x3400  and $u <= 0x4DBF )  or    # CJK Unified Ideographs Extension A
+      ( $u >= 0x20000 and $u <= 0x2A6DF ) or    # CJK Unified Ideographs Extension B
+      ( $u >= 0x2A700 and $u <= 0x2B73F ) or    # CJK Unified Ideographs Extension C
+      ( $u >= 0x2B740 and $u <= 0x2B81F ) or    # CJK Unified Ideographs Extension D
+      ( $u >= 0x2B820 and $u <= 0x2CEAF ) or    # CJK Unified Ideographs Extension E
+      ( $u >= 0x2CEB0 and $u <= 0x2EBEF ) or    # CJK Unified Ideographs Extension F
+      ( $u >= 0x30000 and $u <= 0x3134F ) or    # CJK Unified Ideographs Extension G
+      ( $u >= 0x31350 and $u <= 0x323AF ) or    # CJK Unified Ideographs Extension H
+      ( $u >= 0xF900  and $u <= 0xFAFF )  or    # CJK Compatibility Ideographs
+      ( $u >= 0x3100  and $u <= 0x312f )  or    # Bopomofo
+      ( $u >= 0x31a0  and $u <= 0x31bf )  or    # Bopomofo Extended
+      ( $u >= 0x2F800 and $u <= 0x2FA1F )       # CJK Compatibility Ideographs Supplement
+    );
   return "OTHER";
 }
 
