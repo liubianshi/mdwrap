@@ -10,438 +10,413 @@ use List::Util      qw(any none);
 use open ':std', ':encoding(UTF-8)';
 use App::Markdown::Inline qw(get_syntax_meta);
 use App::Markdown::Utils  qw(_char_attr);
+use App::Markdown::Text::State;
 
 our @EXPORT_OK = qw(wrap set_environemnt_variable);
 
-my $LINE_WIDTH       = 80;
-my $SPACE            = " ";
-my $NEW_LINE         = "\n";
-my $SEPERATOR_SYMBOL = "┄";
+# 配置常量
+use constant {
+  DEFAULT_LINE_WIDTH  => 80,      # 默认行宽
+  SPACE               => " ",     # 空格字符
+  NEW_LINE            => "\n",    # 换行符
+  SEPARATOR_SYMBOL    => "┄",     # 分隔线符号
+  MIN_REMAINING_SPACE => 4,       # 触发换行的最小剩余空间
+  MAX_CONSECUTIVE_NL  => 1,       # 允许的最大连续换行数
+};
+
+my $LINE_WIDTH    = DEFAULT_LINE_WIDTH;    # 当前行宽配置
+my $INLINE_SYNTAX = get_syntax_meta();
 
 sub set_environemnt_variable {
   my $opt = shift;
-  if ( defined $opt->{"line-width"} ) {
+  return unless $opt;
+
+  # 参数有效性检查
+  if ( defined $opt->{"line-width"}
+    && $opt->{"line-width"} =~ /^\d+$/
+    && $opt->{"line-width"} >= 20
+    && $opt->{"line-width"} <= 200 )
+  {
     $LINE_WIDTH = $opt->{"line-width"};
   }
-}
-
-sub _string_init {
-  my $str = shift // "";
-  my $len = shift // mbswidth($str);
-  return { str => $str, len => $len };
-}
-
-sub _line_extend {
-  my ( $str_ref, $char, $width, $opt_ref ) = @_;
-  $width //= mbswidth($char);
-  return $str_ref if $width == 0 and $char eq "";
-
-  # No additional processing is done when splicing characters
-  if ( defined $opt_ref and defined $opt_ref->{noprocess} ) {
-    $str_ref->{str} .= $char;
-    $str_ref->{len} += $width;
-    return $str_ref;
-  }
-
-  my @no_extra_space_after  = ( q( ), qw( $ * _ =   [ / ~) );
-  my @no_extra_space_before = ( q(,), qw( $ * _ = . ] / ~) );
-  my $char_last             = substr( $str_ref->{str}, -1, 1 );
-  my $char_first            = substr( $char,            0, 1 );
-  my $str_attr              = _char_attr( ord $char_last );
-  my $char_attr             = _char_attr( ord $char_first );
-
-  # Insert spaces when splicing text when certain conditions are met
-  if (
-        $str_ref->{len} > 0
-    and ( none { $char_last eq $_ } @no_extra_space_after )
-    and ( none { $char_first eq $_ } @no_extra_space_before )
-
-    # When the sentence ends with a space, or the character begins with
-    # a space, no additional spaces need to be inserted.
-    and not( $char =~ /\A\s/m or $str_ref->{str} =~ /\s\z/m )
-
-    # There is no need for spaces between the bibliographic citation prefixes
-    # after Chinese punctuation marks.
-    and not( $char_first eq '@' and $str_attr =~ /PUN/ )
-
-    # Insert spaces between Chinese and English
-    and ( ( $str_attr eq "OTHER" and $char_attr eq "CJK" ) or ( $str_attr eq "CJK" and $char_attr eq "OTHER" ) )
-    )
-  {
-    $str_ref->{str} .= " $char";
-    $str_ref->{len} += ( $width + 1 );
-  }
-
-  # 应对 rime_ls bug 的临时解决方案 ----------------------------------- {{{
-  elsif ( $str_ref->{str} =~ m/\[\s\z/ and $char_attr eq "CJK" ) {
-    $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
-    $str_ref->{len} += ( $width - 1 );
-  }
-  elsif ( ( $char_attr eq "CJK" and $str_ref->{str} =~ m/[A-z0-9.)][*_]+\z/xms )
-    or ( $str_attr eq "CJK" and $char =~ m/[*_]+[A-z0-9.(]/ ) )
-  {
-    $str_ref->{str} .= " $char";
-    $str_ref->{len} += ( $width + 1 );
-  }
-  elsif ( any { $char_first eq $_ } ("]")
-    and $char_last eq " "
-    and defined substr( $str_ref->{str}, -2, 1 )
-    and _char_attr( ord substr( $str_ref->{str}, -2, 1 ) ) eq "CJK" )
-  {
-    $str_ref->{str} = substr( $str_ref->{str}, 0, -1 ) . $char;
-    $str_ref->{len} += ( $width - 1 );
-  }
-
-  # ------------------------------------------------------------------- }}}
   else {
-    $str_ref->{str} .= $char;
-    $str_ref->{len} += $width;
+    warn "Invalid line-width value, using default: " . DEFAULT_LINE_WIDTH;
+    $LINE_WIDTH = DEFAULT_LINE_WIDTH;
   }
-
-  return $str_ref;
-}
-
-sub _extract {
-  my ( $str_ref, $pos ) = @_;
-  my $string    = $$str_ref;
-  my $str_len   = length($string);
-  my $char_attr = "OTHER";
-  my ( $char_len, $char, $rest, $char_width, $unicode );
-  return ( '', $pos, 0, "OTHER" ) if $pos >= $str_len;
-
-  $char_len = mblen( substr( $string, $pos ) );
-  return ( '?', $pos + 1, -1, "OTHER" ) if $char_len == 0 || $char_len == -1;
-
-  $char = substr( $string, $pos, 1 );
-  $pos += 1;
-  $char_width = mbswidth($char);
-
-  if ( $char_len == 1 ) {
-    return ( $char, $pos, $char_width, "OTHER" );
-  }
-  else {
-    return ( $char, $pos, $char_width, _char_attr( ord($char) ) );
-  }
-}
-
-sub _word_extend {
-  my ( $str_ref, $char, $width ) = @_;
-  $str_ref->{str} .= $char;
-  $str_ref->{len} += $width;
-  return $str_ref;
-}
-
-sub wrap_line {
-  my ( $lines_ref, $line, $word, $char, $char_width ) = @_;
-  $char       //= "";
-  $char_width //= mbswidth($char);
-  if ( remaining_space( $line, $word, { str => $char, len => $char_width } ) <= 0 ) {
-    push @$lines_ref, $line->{str};
-    return 1;
-  }
-
-  return undef;
-}
-
-sub cal_remaining_space {
-  my ( $origin, $new, $limit ) = @_;
-  $limit //= $LINE_WIDTH;
-  return ( $limit - $origin ) - ( $new - $limit );
-}
-
-sub remaining_space {
-  my ( $l, $w, $c ) = @_;
-  $c //= { str => "", len => 0 };
-
-  my $lw = $l->{len} + $w->{len} + $c->{len};
-
-  # 当单词过长时，需要在过长和过短之间权衡
-  my $rm = cal_remaining_space( $l->{len}, $lw );
-
-  # 当接近行长时，比较合并前后行长的情况
-  if ( $rm <= 4 ) {
-    my $nl = _line_extend( { str => $l->{str}, len => $l->{len} }, $w->{str}, $w->{len} );
-    $nl = _line_extend( $nl, $c->{str}, $c->{len} );
-    $lw = $nl->{len};
-    $rm = cal_remaining_space( $l->{len}, $lw );
-  }
-
-  return $rm;
 }
 
 sub wrap {
-  my $prefix_first = shift;    # First line indent
-  my $prefix_other = shift;    # Indent other lines
-  my $oritext      = shift;
-  my $opts         = shift;
+  my ( $prefix_first, $prefix_other, $original_text, $opts ) = @_;
+
+  # 输入验证
+  $prefix_first  //= '';
+  $prefix_other  //= '';
+  $original_text //= '';
 
   # Segmented processing, can consider using multi-threading in the future
-  my @paragrphs = split /^\s*$/mxs, $oritext;
+  my @paragrphs = split /^\s*$/mxs, $original_text;
   if ( scalar @paragrphs > 1 ) {
-    return join "\n", map { wrap( $prefix_first, $prefix_other, $_ ) } @paragrphs;
+    return join "\n", map { wrap( $prefix_first, $prefix_other, $_, $opts ) } @paragrphs;
   }
 
-  # Remove consecutive blank lines and ensure the text ends with a single newline character
-  $oritext =~ s/\A\n+//;
-  $oritext =~ s/[\h\n]*\z/\n/m;
+  # 清理输入文本
+  my $cleaned_text = _clean_input_text($original_text);
+  return "\n" if $cleaned_text eq '';
 
-  $oritext = $prefix_first . $oritext;
-  my $oritext_len = length($oritext);
-  return $oritext if $oritext_len <= 1;
+  # 添加首行前缀
+  $cleaned_text = $prefix_first . $cleaned_text;
 
-  # Process character by character, first aggregate into words, then aggregate
-  # into lines, and consider line breaks at appropriate locations
-  my @lines = ();
-  my $pos   = 0;
-  my $line  = _string_init();
-  my $word  = _string_init();
-  my ( $char, $char_width, $char_attr, $next_char, $next_char_attr );
-  my $inline_syntax     = get_syntax_meta();
-  my $inline_syntax_end = {};
+  # 初始化处理状态
+  my $state = App::Markdown::Text::State->new( $cleaned_text, $prefix_first, $prefix_other );
 
-INNER:
-  while ( $pos < $oritext_len ) {
-    ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
+  while ( $state->{pos} < $state->{text_length} ) {
+    $state->shift_char();
 
-    next INNER if $char_width == -1 and $char ne $NEW_LINE;
+    # 跳过无效字符（错误处理）
+    next unless $state->is_valid_char();
 
-    # end of line terminator
-    if ( $char eq $NEW_LINE and ( $pos >= $oritext_len or substr( $oritext, $pos ) =~ m/\A\s*\z/mxs ) ) {
-      _line_extend( $line, $word->{str}, $word->{len} );
-      push @lines, $line->{str} if $line->{len} > 0;
-      last INNER;
-    }
+    # 处理最后的换行符
+    _finalize_processing($state)
+      if $state->{current_char}{char} eq NEW_LINE
+      and $state->at_end_of_text();
 
-    my $prefix_char = $pos > 1 ? substr( $oritext, $pos - 2, 1 ) : undef;
-    $next_char = substr( $oritext, $pos, 1 );
-
-    # 先考虑结束的情况
-    my $syn_end = $inline_syntax_end->{$char};
-    if ( defined $syn_end and scalar @{$syn_end} > 0 ) {
-      $syn_end = [$syn_end] if ref $syn_end ne ref [];
-      my $arg = {
-        char    => $char,
-        left    => $prefix_char,
-        right   => $next_char,
-        str_ref => \$oritext,
-        pos     => $pos,
-        cap     => $word->{str}
-      };
-      for my $i ( 0 .. ( scalar( @{$syn_end} ) - 1 ) ) {
-        my $m = $syn_end->[$i]->($arg);
-        next unless defined $m;
-
-        # 结束条件一旦满足，就需要从中删除
-        splice( @{$syn_end}, $i, 1 );
-
-        _word_extend( $word, $char, $char_width ) if $char ne "";
-        my $end_len = $m->{end_len} // 1;
-        for ( 1 .. ( $end_len - 1 ) ) {
-          ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
-          _word_extend( $word, $char, $char_width ) if $char ne "";
-        }
-        $word->{len} -= ( $m->{conceal} // 0 );
-
-        last;
-      }
-
-      # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
-      # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
-      wrap_line( \@lines, $line, $word ) and $line = _string_init($prefix_other);
-
-      _line_extend( $line, $word->{str}, $word->{len} );
-      $word = _string_init();
-
-      next INNER;
-    }
-
-    # 考虑行内语法开始的情况
-    my $syn = $inline_syntax->{$char};
-    if ( defined $syn ) {
-      $syn = ref $syn eq ref [] ? $syn : [$syn];
-      my $arg = {
-        char    => $char,
-        left    => $prefix_char,
-        right   => $next_char,
-        str_ref => \$oritext,
-        pos     => $pos,
-      };
-      for my $handler ( @{$syn} ) {
-        my $m = $handler->($arg);
-        next unless defined $m;
-
-        # 先将单词的内容清空，因为没有引入新字符，所以不用考虑折行的问题
-        _line_extend( $line, $word->{str}, $word->{len} );
-        $word = _string_init();
-
-        # 处理行内语法的起始标记
-        _word_extend( $word, $char, $char_width ) if $char ne "";
-        my $start_len = $m->{start_len} // 1;
-        for ( 1 .. ( $start_len - 1 ) ) {
-          ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
-          _word_extend( $word, $char, $char_width ) if $char ne "";
-        }
-        $word->{len} -= ( $m->{conceal} // 0 );
-
-        # 对于那些允许跨行的行内语法，像普通字符那样处理即可
-        # 但需要记录结束条件，后进先出
-        if ( $m->{wrap} ) {
-          $inline_syntax_end->{ $m->{endchar} } //= [];
-          unshift @{ $inline_syntax_end->{ $m->{endchar} } }, $m->{endprobe};
-          next INNER;
-        }
-
-        # 捕获特殊语法覆盖的字符，直到满足结束条件，结束时的当前字符需在语法覆盖范围内
-        while ( $pos < $oritext_len ) {
-          $prefix_char = $char;
-          ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
-          $next_char = substr( $oritext, $pos, 1 );
-
-          # 换行符需要根据上下文处理
-          if ( $char eq $NEW_LINE ) {
-            update_when_new_line( \$oritext, substr( $word->{str}, -1 ), \$char, \$pos, \$next_char );
-            $char_width = $char eq "" ? 0 : 1;
-          }
-          _word_extend( $word, $char, $char_width ) if $char ne "";
-
-          # 更新结束探针所需的参数
-          $arg = {
-            char    => $char,
-            left    => $prefix_char,
-            right   => $next_char,
-            str_ref => \$oritext,
-            pos     => $pos,
-            cap     => $word->{str}
-          };
-          my $end_info = $m->{endprobe}->($arg);
-
-          next if not defined $end_info;
-
-          # 达到结束条件时，考虑 conceal, 以及结束标记的数目
-          my $end_len = $end_info->{end_len} // 1;
-          for ( 1 .. ( $end_len - 1 ) ) {
-            ( $char, $pos, $char_width, $char_attr ) = _extract( \$oritext, $pos );
-            _word_extend( $word, $char, $char_width ) if $char ne "";
-          }
-          $word->{len} -= ( $end_info->{conceal} // 0 );
-          last;
-        }
-
-        # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
-        # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
-        wrap_line( \@lines, $line, $word ) and $line = _string_init($prefix_other);
-        _line_extend( $line, $word->{str}, $word->{len} );
-        $word = _string_init();
-
-        # 如果光标已经移到字符串末尾，那么结束整个循环
-        if ( $pos >= $oritext_len ) {
-          push @lines, $line->{str} if $line->{len} > 0;
-          last INNER;
-        }
-
-        # 一个字符可能时多个语法结构的起始字符，只要满足一个，就消耗掉该字符，不再考虑后续的语法
-        # 只要满足特殊语法，那么该字符就会以特殊语法处理
-        next INNER;
-      }
-    }
+    # 优先处理行内语法标记
+    next if _handle_inline_syntax($state);
 
     # 换行符号的特殊处理
-    if ( $char eq $NEW_LINE ) {
-      update_when_new_line( \$oritext, substr( $word->{str} eq "" ? $line->{str} : $word->{str}, -1 ),
-        \$char, \$pos, \$next_char );
-      $char_width = $char eq "" ? 0 : 1;
-      $char_attr  = "";
-    }
-    $next_char_attr = _char_attr( ord $next_char );
+    update_when_new_line($state) if $state->{current_char}{char} eq NEW_LINE;
 
-    # line wrap are not allowed after the current letter
-    # or the next character cannot be the start of a new line.
-    if ( $char_attr eq "PUN_FORBIT_BREAK_AFTER"
-      || $char_attr eq "PUN_FORBIT_BREAK_BEFORE"
-      || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE"
-      || grep { $_ eq $next_char or $_ eq $char } split( //, ",.!" ) )
+    # 不能折行的情况
+    next if _handle_wrap_forbidden($state);
 
-    {
-      _line_extend( $line, $word->{str}, $word->{len} );
-      _line_extend( $line, $char, $char_width, { noprocess => 1 } );
-      $word = _string_init();
-      next INNER;
-    }
+    # 当前行还有插入一个字符的空间
+    next if _handle_with_remaining_room($state);
 
-    # whether the current line have enough room for the curren character
-    my $with_enough_room = remaining_space( $line, $word, { str => $char, len => $char_width } );
+    # 在行空间已满的情况下处理空格
+    next if _handle_space($state);
 
-    if ( $with_enough_room > 0 ) {
-      if ( $char_width == 0 ) {
-        _line_extend( $line, $word->{str}, $word->{len} );
-        $word = _string_init();
-      }
-      elsif ( $char eq $SPACE || $char_attr ne "OTHER" ) {
-        _line_extend( $line, $word->{str}, $word->{len} );
-        _line_extend( $line, $char,        $char_width );
-        $word = _string_init();
-      }
-      else {
-        _word_extend( $word, $char, $char_width );
-      }
-      next INNER;
-    }
+    # 以空格结尾的行
+    next if _handle_line_end_with_space($state);
 
-    # 新字符为空字符
-    if ( $char eq "" or $char =~ m/\A \s* \z/mxs ) {
+    # CJK
+    next if _handle_cjk($state);
 
-      # 当行长已经足够时，可以省略空格
-      _line_extend( $line, $word->{str}, $word->{len} ) unless $word->{str} eq $SPACE;
-      push @lines, $line->{str};
-      $line = _string_init($prefix_other);
-      $word = _string_init();
-      next INNER;
-    }
-
-    # the line ends by space
-    if ( $line->{str} =~ m/\s$/ and $word->{str} eq "" ) {
-      push @lines, $line->{str} =~ s/\s$//r;
-      $line = _string_init($prefix_other);
-      _word_extend( $word, $char, $char_width );
-      next INNER;
-    }
-
-    if ( any { $char_attr eq $_ } qw(CJK CJK_PUN PUN_FORBIT_BREAK_BEFORE) ) {
-      _line_extend( $line, $word->{str}, $word->{len} );
-      _line_extend( $line, $char,        $char_width );
-      push @lines, $line->{str};
-
-      # Spaces between CJK and English should be removed after a line break
-      $pos += 1 if substr( $oritext, $pos, 2 ) =~ m/\A\s(?!\s)/;
-
-      $line = _string_init($prefix_other);
-      $word = _string_init();
-      next INNER;
-    }
-
-    _word_extend( $word, $char, $char_width );
-    push @lines, $line->{str};
-    $line = _string_init($prefix_other);
+    # 普通字符
+    $state->push_line();
+    $state->word_extend();
   }
 
-  return join( "\n", map { s/\s+$//rmxs } @lines ) . "\n";
+  # 返回格式化后的文本
+  return _generate_output($state);
 }
 
-sub update_when_new_line {
-  my ( $string_r, $last_char, $char_r, $pos_r, $next_char_r ) = @_;
-  if ( substr( ${$string_r}, ${$pos_r} ) =~ m/\A(\s+)/ ) {
-    ${$pos_r} += length($1);
-    ${$next_char_r} = substr( ${$string_r}, ${$pos_r}, 1 );
+sub wrap_line {
+  my $state      = shift;
+  my $char       = $state->{current_char};
+  my $free_space = remaining_space($state);
+  if ( $free_space <= 0 ) {
+    $state->push_line();
+    return 1;
   }
+
+  return;
+}
+
+sub _handle_cjk {
+  my ($state)   = @_;
+  my $char_info = $state->{current_char};
+  my $line      = $state->{current_line};
+  my $word      = $state->{current_word};
+  return if none { $char_info->{type} eq $_ } qw(CJK CJK_PUN);
+
+  $state->word_extend();
+  $state->line_extend();
+  $state->push_line();
+
+  # Spaces between CJK and English should be removed after a line break
+  $state->{pos} += 1
+    if $state->extract_next_char_info()->{char}   =~ m/\s/
+    and $state->extract_next_char_info(1)->{char} !~ m/\s/;
+
+  return 1;
+}
+
+# the line ends by space
+sub _handle_line_end_with_space {
+  my ($state)   = @_;
+  my $char_info = $state->{current_char};
+  my $line      = $state->{current_line};
+  my $word      = $state->{current_word};
+
+  return unless $line->{str} =~ m/\s$/ and $word->{str} eq "";
+
+  $line->{str} =~ s/\s+$//;
+  $state->push_line();
+  $state->word_extend();
+
+  return 1;
+}
+
+# handle space
+sub _handle_space {
+  my ($state) = @_;
+  my $char_info = $state->{current_char};
+
+  my $char = $char_info->{char};
+  return unless $char eq "" or $char =~ m/\A \s* \z/mxs;
+
+  if ( $state->{current_word}{str} ne SPACE ) {
+    $state->line_extend();
+  }
+  $state->push_line();
+  return 1;
+}
+
+# whether the current line have enough room for the curren character
+sub _handle_with_remaining_room {
+  my ($state)         = @_;
+  my $char_info       = $state->{current_char};
+  my $remaining_space = remaining_space($state);
+  return if $remaining_space <= 0;
+
+  if ( $char_info->{width} == 0 ) {
+    $state->line_extend();
+  }
+  elsif ( $char_info->{char} eq SPACE || $char_info->{type} ne "OTHER" ) {
+    $state->word_extend();
+    $state->line_extend();
+  }
+  else {
+    $state->word_extend();
+  }
+
+  return 1;
+}
+
+# line wrap are not allowed after the current letter
+# or the next character cannot be the start of a new line.
+sub _handle_wrap_forbidden {
+  my ($state)        = @_;
+  my $char_info      = $state->{current_char};
+  my $next_char_info = $state->extract_next_char_info();
+
+  my $char      = $char_info->{char};
+  my $char_attr = $char_info->{type};
+  return unless $char_attr eq "PUN_FORBIT_BREAK_BEFORE" || grep { $_ eq $char } split( //, ",.!" );
+
+  my $string_before_char = $state->{current_line}{str} . $state->{current_word}{str};
+  $string_before_char = substr( $string_before_char, length( $state->{prefix}{other} ) );
+  if ( $string_before_char =~ m/^\s*$/ and scalar @{ $state->{lines} } > 0 ) {
+    $state->{lines}[-1] .= $char;
+  }
+  else {
+    $state->word_extend();
+    $state->line_extend();
+  }
+
+  return 1;
+}
+
+sub cal_remaining_space {
+  my ( $origin, $new, $line_width ) = @_;
+  $line_width //= $LINE_WIDTH;
+  return ( $line_width - $origin ) - ( $new - $line_width );
+}
+
+sub remaining_space {
+  my ($state) = @_;
+  my $line    = $state->{current_line};
+  my $word    = $state->{current_word};
+  my $char    = $state->{current_char};
+
+  # 计算总显示长度（当前行 + 当前词 + 下个字符）
+  my $total_visible_length = $line->{len} + $word->{len} + $char->{width};
+
+  # 基础剩余空间计算
+  my $remaining = cal_remaining_space( $line->{len}, $total_visible_length );
+
+  # 处理长单词溢出情况
+  if ( $remaining <= 4 ) {
+    my $newline = $state->line_extend(
+      {
+        line   => $state->line_extend( { update => 0 } ),
+        word   => { str => $char->{char}, len => $char->{width} },
+        update => 0
+      }
+    );
+
+    $total_visible_length = $newline->{len};
+    $remaining            = cal_remaining_space( $line->{len}, $total_visible_length );
+  }
+
+  return $remaining;
+}
+
+# 判断如果处理改换行符，是当成空格处理，还是直接忽略
+sub update_when_new_line {
+  my ($state)   = @_;
+  my $char_info = $state->{current_char};
+  my $string    = ${ $state->{original_text} };
+  my $last_char = substr( $state->{current_line}{str} . $state->{current_word}{str}, -1 );
+
+  # 换行符后面的字符串以空格开头，可以直接删除
+  if ( substr( $string, $state->{pos} ) =~ m/\A(\s+)/ ) {
+    $state->{pos} += length($1);
+  }
+
+  # 换行符后面的第一个非空字符
+  my $next_char_info = $state->extract_next_char_info();
 
   # When the first character of the next line is CJK,
   # there is no need to add an extra space when merging lines.
-  if ( mbwidth( ${$next_char_r} ) > 1 and _char_attr( ord ${$next_char_r} ) ne "OTHER" ) {
-    ${$char_r} = ( $last_char eq $SPACE || _char_attr( ord $last_char ) ne "OTHER" ) ? "" : $SPACE;
+  if (  $next_char_info->{width} > 1
+    and $next_char_info->{type} ne "OTHER"
+    and $last_char eq "" || $last_char eq SPACE || _char_attr( ord $last_char ) ne "OTHER" )
+  {
+    $char_info->{char}  = "";
+    $char_info->{width} = 0;
   }
   else {
-    ${$char_r} = $SPACE;
+    $char_info->{char}  = SPACE;
+    $char_info->{width} = 1;
   }
+}
+
+# 文本预处理函数
+sub _clean_input_text {
+  my ($text) = @_;
+
+  # 标准化换行符
+  $text =~ s/\r\n?/\n/g;
+
+  # 移除首尾空白和多余空行
+  $text =~ s/^\s+//mg;
+  $text =~ s/\h+$//mg;
+  $text =~ s/\n{3,}/\n\n/g;
+
+  return $text;
+}
+
+# 独立语法处理函数
+sub _handle_inline_syntax {
+  my $state = shift;
+  my $char  = $state->{current_char}{char};
+
+  # 处理语法结束标记
+  my $syn_end = $state->{inline_syntax_end}{$char};
+  if ( defined $syn_end ) {
+    for my $i ( 0 .. $#{$syn_end} ) {
+      my $handler           = $syn_end->[$i];
+      my $end_handle_result = _handle_inline_syntax_end( $handler, $state );
+      if ($end_handle_result) {
+        splice( @{ $state->{inline_syntax_end}{$char} }, $i, 1 );
+        return 1;
+      }
+    }
+  }
+
+  if ( my $syn_start = $INLINE_SYNTAX->{$char} ) {
+    $syn_start = [$syn_start] if ref($syn_start) ne ref( [] );
+    for my $handler ( @{$syn_start} ) {
+      my $start_handle_result = _handle_inline_syntax_start( $handler, $state );
+      return 1 if $start_handle_result;
+    }
+  }
+
+  return;
+}
+
+sub _handle_inline_syntax_end {
+  my ( $handler, $state ) = @_;
+
+  my $m = $handler->($state);
+  return unless defined $m;
+
+  $state->word_extend();
+
+  my $end_len = $m->{end_len} // 1;
+  for ( 1 .. ( $end_len - 1 ) ) {
+    $state->shift_char();
+    $state->word_extend();
+  }
+
+  $state->{current_word}{len} -= $m->{conceal} // 0;
+
+  # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
+  # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
+  wrap_line($state);
+
+  $state->line_extend();
+
+  return 1;
+}
+
+sub _handle_inline_syntax_start {
+  my ( $handler, $state ) = @_;
+  my $m = $handler->($state);
+  return unless defined $m;
+
+  # 先将单词的内容清空，因为没有引入新字符，所以不用考虑折行的问题
+  $state->line_extend();
+
+  # 处理行内语法的起始标记
+  $state->word_extend();
+
+  my $start_len = $m->{start_len} // 1;
+  for ( 1 .. ( $start_len - 1 ) ) {
+    $state->shift_char();
+    $state->word_extend();
+  }
+  $state->{current_word}{len} -= $m->{conceal} // 0;
+
+  # 对于那些允许跨行的行内语法，像普通字符那样处理即可
+  # 但需要记录结束条件，后进先出
+  if ( $m->{wrap} ) {
+    $state->{inline_syntax_end}{ $m->{endchar} } //= [];
+    unshift @{ $state->{inline_syntax_end}{ $m->{endchar} } }, $m->{endprobe};
+    return 1;
+  }
+
+  while ( $state->{pos} < $state->{text_length} ) {
+    $state->shift_char();
+    my $char_info = $state->{current_char};
+
+    if ( $char_info->{char} eq NEW_LINE ) {
+      update_when_new_line($state);
+    }
+
+    my $end_handle_result = _handle_inline_syntax_end( $m->{endprobe}, $state );
+
+    last if defined $end_handle_result;
+    $state->word_extend();
+  }
+
+  $state->push_line() if $state->{pos} >= $state->{text_length};
+
+  # 一个字符可能时多个语法结构的起始字符，只要满足一个，就消耗掉该字符，不再考虑后续的语法
+  # 只要满足特殊语法，那么该字符就会以特殊语法处理
+  return 1;
+}
+
+# 最终处理逻辑
+sub _finalize_processing {
+  my ($state) = @_;
+
+  $state->line_extend();
+  $state->push_line();
+}
+
+# 生成最终输出
+sub _generate_output {
+  my ($state) = @_;
+
+  # 清理行尾空白并连接结果
+  my $result = join( "\n", map { s/\s+$//r } grep { length } @{ $state->{lines} } );
+
+  # 保留原始段落结尾的换行
+  $result .= "\n" if ${ $state->{original_text} } =~ /\n$/;
+
+  return $result;
 }
 
 1;

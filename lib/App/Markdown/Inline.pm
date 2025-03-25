@@ -23,12 +23,10 @@ my %RE = (
 
 my $syntax = {
   '`' => sub {
-    my $arg       = shift;
-    my $str       = ${ $arg->{str_ref} };
-    my $pos       = $arg->{pos};
-    my $left_char = $arg->{left};
+    my $state = shift || return;
+    my ( $str_ref, $pos, $char, $left_char ) = _format_arg($state);
     return if $left_char eq "`" or $left_char eq "\\";
-    return if substr( $str, $pos - 1 ) !~ m{
+    return if substr( ${$str_ref}, $pos - 1 ) !~ m{
       \A (
         [`]
         (?: [^`] | \\[`])+
@@ -42,20 +40,17 @@ my $syntax = {
       conceal  => 1,
       endchar  => "`",
       endprobe => sub {
-        my $arg = shift;
-        return if $arg->{pos} != $end_pos;
+        my $state = shift;
+        return if $state->{pos} != $end_pos;
         return { conceal => 1 };
       }
     };
   },
   '*' => sub {
-    my $arg       = shift;
-    my $str       = ${ $arg->{str_ref} };
-    my $pos       = $arg->{pos};
-    my $char      = $arg->{char};
-    my $left_char = $arg->{left} // "";
+    my $state = shift || return;
+    my ( $str_ref, $pos, $char, $left_char ) = _format_arg($state);
     return if $left_char eq "\\" or $left_char eq '*';
-    return if substr( $str, $pos - 1 ) !~ m{
+    return if substr( ${$str_ref}, $pos - 1 ) !~ m{
       \A (
         ([*]{1,3}) (?![\s*])
         (?: [^*] | \\[*] | $RE{balance_star} )+?
@@ -70,8 +65,8 @@ my $syntax = {
       conceal   => length($symbol),
       endchar   => "*",
       endprobe  => sub {
-        my $arg = shift;
-        return if $arg->{pos} != $end_pos - ( length($symbol) - 1 );
+        my $state = shift;
+        return if $state->{pos} != $end_pos - ( length($symbol) - 1 );
         return {
           end_len => length($symbol),
           conceal => length($symbol)
@@ -80,12 +75,10 @@ my $syntax = {
     };
   },
   '$' => sub {
-    my $arg       = shift;
-    my $str       = ${ $arg->{str_ref} };
-    my $pos       = $arg->{pos};
-    my $left_char = $arg->{left};
+    my $state = shift || return;
+    my ( $str_ref, $pos, $char, $left_char ) = _format_arg($state);
     return if $left_char eq "\\" and $left_char ne '$';
-    return if substr( $str, $pos - 1 ) !~ m{
+    return if substr( ${$str_ref}, $pos - 1 ) !~ m{
       \A (
         \$
         (?: [^\$] | \\\$)+
@@ -99,29 +92,28 @@ my $syntax = {
       conceal  => 0,
       endchar  => '$',
       endprobe => sub {
-        my $arg = shift;
-        return if $arg->{pos} != $end_pos;
+        my $state = shift;
+        return if $state->{pos} != $end_pos;
         return { conceal => 0 };
       }
     };
   },
   '@' => sub {
-    my $arg        = shift;
-    my $pos        = $arg->{pos};
-    my $left_char  = $arg->{left};
-    my $right_char = $arg->{right};
-    return if $left_char eq "\\" or ( $left_char =~ /\S/ and _char_attr( ord $left_char ) eq "OTHER" );
+    my $state = shift || return;
+    my ( $str_ref, $pos, $char, $left_char, $left_char_attr ) = _format_arg($state);
+    my $right_char = $state->extract_next_char_info()->{char};
+    return if $left_char eq "\\" or ( $left_char =~ /\S/ and $left_char_attr eq "OTHER" );
     return if $right_char = m/[@\s\n]/;
     return {
       conceal  => 0,
       wrap     => 0,
       endprobe => sub {
-        my $arg    = shift;
-        my $str    = ${ $arg->{str_ref} };
-        my $pos    = $arg->{pos};
-        my $char_r = substr( $str, $pos, 1 );
-        if (  any { $char_r eq $_ } ( "", " ", "\n", split( //, '],:;' ) )
-          and any { _char_attr( ord $char_r ) eq $_ } qw(CJK_PUN PUN_FORBIT_BREAK_BEFORE PUN_FORBIT_BREAK_AFTER) )
+        my $state = shift;
+        my $str   = ${ $state->{original_text} };
+        my $pos   = $state->{pos};
+        my $right = $state->extract_next_char_info();
+        if (  any { $right->{char} eq $_ } ( "", " ", "\n", split( //, '],:;' ) )
+          and any { $right->{type} eq $_ } qw(CJK_PUN PUN_FORBIT_BREAK_BEFORE PUN_FORBIT_BREAK_AFTER) )
         {
           return { conceal => 0 };
         }
@@ -132,14 +124,11 @@ my $syntax = {
     };
   },
   '[' => [
-
-    # extneal link
-    sub {
-      my $arg = shift;
-      my $str = ${ $arg->{str_ref} };
-      my $pos = $arg->{pos};
-      return if $arg->{left} eq "\\";
-      return if not substr( $str, $pos - 1 ) =~ m{ \A (
+    sub {    # extneal link
+      my $state = shift || return;
+      my ( $str_ref, $pos, $char, $left_char ) = _format_arg($state);
+      return if $left_char eq "\\";
+      return if not substr( ${$str_ref}, $pos - 1 ) =~ m{ \A (
         \[ ($RE{not_right_bracket}*) (?<!\])\]
         \s*
         \( $RE{not_right_par}* (?<!\\) \)
@@ -151,8 +140,8 @@ my $syntax = {
         conceal  => 0,
         wrap     => 0,
         endprobe => sub {
-          my $arg = shift;
-          return if $arg->{pos} != $end_pos;
+          my $state = shift;
+          return if $state->{pos} != $end_pos;
           return { conceal => $concealed_char_number };
         }
       };
@@ -160,11 +149,10 @@ my $syntax = {
 
     # wiki link
     sub {
-      my $arg = shift;
-      my $str = ${ $arg->{str_ref} };
-      my $pos = $arg->{pos};
-      return if $arg->{left} eq "\\";
-      return if not substr( $str, $pos - 1 ) =~ m{
+      my $state = shift || return;
+      my ( $str_ref, $pos, $char, $left_char ) = _format_arg($state);
+      return if $left_char eq "\\";
+      return if not substr( ${$str_ref}, $pos - 1 ) =~ m{
         \A (
           \[\[ ($RE{not_right_bracket}*) (?<!\])\]\]
         )
@@ -179,8 +167,8 @@ my $syntax = {
         conceal  => 0,
         wrap     => 0,
         endprobe => sub {
-          my $arg = shift;
-          return if $arg->{pos} != $end_pos;
+          my $state = shift;
+          return if $state->{pos} != $end_pos;
           return { conceal => $concealed_char_number };
         }
       };
@@ -188,12 +176,10 @@ my $syntax = {
 
     # ref link
     sub {
-      my $arg   = shift;
-      my $str   = ${ $arg->{str_ref} };
-      my $pos   = $arg->{pos};
-      my $no_rB = qr/(?:[^\]]|\\\])/;
-      return if $arg->{left} eq "\\";
-      return if not substr( $str, $pos - 1 ) =~ m{
+      my $state = shift || return;
+      my ( $str_ref, $pos, $char, $left_char ) = _format_arg($state);
+      return if $left_char eq "\\";
+      return if not substr( ${$str_ref}, $pos - 1 ) =~ m{
         \A (
           \[ $RE{not_right_bracket}* (?!\\)\]
           \s*
@@ -207,8 +193,8 @@ my $syntax = {
         conceal  => 0,
         wrap     => 0,
         endprobe => sub {
-          my $arg = shift;
-          return if $arg->{pos} != $end_pos;
+          my $state = shift;
+          return if $state->{pos} != $end_pos;
           return { conceal => $concealed_char_number };
         }
       };
@@ -218,6 +204,15 @@ my $syntax = {
 
 sub get_syntax_meta {
   return $syntax;
+}
+
+sub _format_arg {
+  my $state   = shift || return;
+  my $str_ref = $state->{original_text};
+  my $pos     = $state->{pos};
+  my $char    = $state->{current_char}{char};
+  my $left    = $state->extract_next_char_info(-2);
+  return ( $str_ref, $pos, $char, $left->{char}, $left->{type} );
 }
 
 return 1;
