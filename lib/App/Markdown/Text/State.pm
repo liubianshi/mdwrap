@@ -8,21 +8,19 @@ use Text::CharWidth      qw(mbswidth mblen mbwidth);
 
 sub new {
   my $class = shift;
-  my ( $text, $prefix_first, $prefix_other ) = @_;
-  $text         //= '';
-  $prefix_first //= '';
-  $prefix_other //= '';
+  my $args = shift;
+  $args = { prefix_first => "", prefix_other => "", content => \(""), %{$args} };
 
   my $self = {
     lines             => [],
-    original_text     => \$text,
-    text_length       => length($text),
+    original_text     => $args->{content},
+    text_length       => length(${$args->{content}}),
     pos               => 0,
-    current_line      => _string_init(),
+    current_line      => _string_init($args->{prefix_first}),
     current_word      => _string_init(),
     current_char      => _char_init(),
-    inline_syntax_end => {},                                                   # 新增语法结束标记栈
-    prefix            => { first => $prefix_first, other => $prefix_other },
+    inline_syntax_end => {},                 # 新增语法结束标记栈
+    prefix            => { first => $args->{prefix_first}, other => $args->{prefix_other} },
   };
 
   bless $self, $class;
@@ -89,7 +87,7 @@ sub is_valid_char {
   return ( $char_info->{width} != -1 || $char_info->{char} eq "\n" );
 }
 
-sub shift_char {
+sub next {
   my $self = shift;
   $self->{current_char} = $self->extract_next_char_info();
   $self->{pos} += 1;

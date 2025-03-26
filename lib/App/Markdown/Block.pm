@@ -143,7 +143,7 @@ sub tostring {
 
     # 自动换行模式
     my $indent = $prefix . indent($content);
-    $formatted = wrap( $prefix, $indent, $content );
+    $formatted = ${ wrap({prefix_first => $prefix, prefix_other => $indent, content => \$content }) };
   }
   else {
     # 直接添加前缀模式

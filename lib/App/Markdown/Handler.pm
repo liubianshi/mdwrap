@@ -85,7 +85,7 @@ sub yaml_header {
   $block->extend($line);
   if ($match_yaml_symbol) {
     if ( $btype eq "yaml" ) {
-      $self->upload( { add_empty_line => 0 } );
+      $self->upload( { add_empty_line => 1 } );
     }
     else {
       $block->update( { type => "yaml", attr => { wrap => 0 } } );
