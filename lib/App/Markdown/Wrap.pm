@@ -109,7 +109,7 @@ sub run {
     }
 
     # Listings and quoted text are seListings and quoted text are segmented by special logicgmented by special logic
-    next if $handler->quote($_);
+    #next if $handler->quote($_);
     next if $handler->line_can_sep_paragraph($_);
 
     next if $handler->normal_line($_);

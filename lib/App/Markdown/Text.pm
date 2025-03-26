@@ -59,7 +59,7 @@ sub wrap {
 
   # 文本预处理管道
   my $processed_text = _clean_input_text(shift @paragraphs);
-  return q() if $processed_text eq q();
+  return \("") if $processed_text eq q();
 
   # 初始化状态机
   my $state = App::Markdown::Text::State->new({%{$args}, content => \$processed_text});

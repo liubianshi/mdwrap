@@ -108,6 +108,7 @@ sub normal_line {
       my $last_block = $self->{last_block};
       if ( defined $last_block and not $last_block->get("add_empty_line") ) {
         $self->{block}->extend("\n");
+        $block->update( { attr => { wrap => 0 } } );
         $self->upload();
       }
     }
@@ -580,6 +581,7 @@ sub adjust_tonewsboat_image {
 sub quote {
   my ( $self, $line ) = @_;
   return if $line !~ m/\A\s*[>]/;
+  return if $line =~ m/\A\s{4,}/; ## 如缩进 4 个空格，那么应当成代码块处理
   return if $self->{block}->get("type") ne "normal";
   $self->upload();
 
