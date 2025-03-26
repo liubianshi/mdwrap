@@ -129,8 +129,7 @@ sub _handle_cjk {
   my $word      = $state->{current_word};
   return if none { $char_info->{type} eq $_ } qw(CJK CJK_PUN);
 
-  $state->word_extend();
-  $state->line_extend();
+  $state->upload_non_word_character();
   $state->push_line();
 
   # Spaces between CJK and English should be removed after a line break
@@ -143,17 +142,26 @@ sub _handle_cjk {
 
 # the line ends by space
 sub _handle_line_end_with_space {
-  my ($state)   = @_;
-  my $char_info = $state->{current_char};
-  my $line      = $state->{current_line};
-  my $word      = $state->{current_word};
+  my ($state) = @_;
+  my $line    = $state->{current_line};
+  my $word    = $state->{current_word};
 
-  return unless $line->{str} =~ m/\s$/ and $word->{str} eq "";
+  $state->line_extend() if $word->{str} =~ m/^\s+$/;
+  return                if $word->{str} ne "";
+  return                if substr( $line->{str}, length( $state->{prefix}{other} ) ) !~ m/(\s+)$/;
+  my $trail_space_number = length($1);
 
-  $line->{str} =~ s/\s+$//;
-  $state->push_line();
+  if ( $trail_space_number == 1 ) {
+    $line->{str} = substr( $line->{str}, 0, -1 );
+    $line->{len} -= 1;
+    $state->push_line();
+  }
+  else {
+    $line->{str} = substr( $line->{str}, 0, -$trail_space_number + 1 );
+    $line->{len} -= ( $trail_space_number - 1 );
+  }
+
   $state->word_extend();
-
   return 1;
 }
 
@@ -165,7 +173,7 @@ sub _handle_space {
   my $char = $char_info->{char};
   return unless $char eq "" or $char =~ m/\A \s* \z/mxs;
 
-  if ( $state->{current_word}{str} ne SPACE ) {
+  if ( $state->{current_word}{str} ne SPACE and $state->{current_word}{str} ne "" ) {
     $state->line_extend();
   }
   $state->push_line();
@@ -182,9 +190,11 @@ sub _handle_with_remaining_room {
   if ( $char_info->{width} == 0 ) {
     $state->line_extend();
   }
-  elsif ( $char_info->{char} eq SPACE || $char_info->{type} ne "OTHER" ) {
-    $state->word_extend();
-    $state->line_extend();
+  elsif ( $char_info->{char} eq SPACE ) {
+    $state->upload_non_word_character();
+  }
+  elsif ( $char_info->{type} ne "OTHER" ) {
+    $state->upload_non_word_character();
   }
   else {
     $state->word_extend();

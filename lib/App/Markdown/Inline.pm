@@ -181,11 +181,11 @@ my $syntax = {
       return if $left_char eq "\\";
       return if not substr( ${$str_ref}, $pos - 1 ) =~ m{
         \A (
-          \[ $RE{not_right_bracket}* (?!\\)\]
+          \[ ($RE{not_right_bracket}*) (?!\\)\]
           \s*
           \[ $RE{not_right_bracket}+ (?!\\)\]
         )
-      };
+      }xms;
       my ( $matched, $display ) = ( $1, $2 );
       my $concealed_char_number = mbswidth($matched) - ( mbswidth($display) + 2 );
       my $end_pos               = $pos + length($matched) - 1;

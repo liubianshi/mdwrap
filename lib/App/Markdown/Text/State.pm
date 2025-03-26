@@ -61,10 +61,11 @@ sub extract_next_char_info {
 }
 
 sub init {
-  my $self = shift;
-  my $key  = shift;
-  if    ( $key eq "current_line" ) { $self->{$key} = _string_init( $self->{prefix}{other} ) }
-  elsif ( $key eq "current_word" ) { $self->{$key} = _string_init() }
+  my $self  = shift;
+  my $key   = shift;
+  my $value = shift // ( $key eq "current_line" ? $self->{prefix}{other} : "" );
+  if    ( $key eq "current_line" ) { $self->{$key} = _string_init($value) }
+  elsif ( $key eq "current_word" ) { $self->{$key} = _string_init($value) }
 }
 
 sub update {
@@ -198,6 +199,14 @@ sub line_extend {
 
   return $line if $no_update;
   $self->init("current_word");
+  return $self;
+}
+
+sub upload_non_word_character {
+  my $self = shift;
+  $self->line_extend();
+  $self->word_extend();
+  $self->line_extend();
   return $self;
 }
 
