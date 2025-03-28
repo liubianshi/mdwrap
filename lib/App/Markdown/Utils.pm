@@ -174,6 +174,7 @@ sub _char_attr {
     0x3001,    # 、 Ideographic comma
     0xff0c,    # ， Fullwidth comma
     0x3002,    # 。 Ideographic full stop
+    0xff09,    # ） Fullwidth right parenthesis
     0x3003,    # 〃 Ditto mark
     0x3009,    # 〉 Right angle bracket
     0x300b,    # 》 Right double angle bracket

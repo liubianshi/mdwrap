@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 use Data::Dump      qw(dump);
 use Text::CharWidth qw(mbswidth mblen mbwidth);
-
+use List::Util      qw(any none);
 use App::Markdown::Utils qw(_char_attr);
 
 use Exporter 'import';
@@ -112,8 +112,8 @@ my $syntax = {
         my $str   = ${ $state->{original_text} };
         my $pos   = $state->{pos};
         my $right = $state->extract_next_char_info();
-        if (  any { $right->{char} eq $_ } ( "", " ", "\n", split( //, '],:;' ) )
-          and any { $right->{type} eq $_ } qw(CJK_PUN PUN_FORBIT_BREAK_BEFORE PUN_FORBIT_BREAK_AFTER) )
+        if (  any { $right->{char} eq $_ } ( "", " ", "\n", split( //, '[],:;' ) )
+          or any { $right->{type} eq $_ } qw(CJK_PUN PUN_FORBIT_BREAK_BEFORE PUN_FORBIT_BREAK_AFTER) )
         {
           return { conceal => 0 };
         }

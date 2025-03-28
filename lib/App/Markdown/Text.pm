@@ -228,7 +228,7 @@ sub _handle_wrap_forbidden {
 
   my $char      = $char_info->{char};
   my $char_attr = $char_info->{type};
-  return unless $char_attr eq "PUN_FORBIT_BREAK_BEFORE" || grep { $_ eq $char } split( //, ",.!" );
+  return unless $char_attr eq "PUN_FORBIT_BREAK_BEFORE" || grep { $_ eq $char } split( //, q{'",.!)} );
 
   my $string_before_char = $state->{current_line}{str} . $state->{current_word}{str};
   $string_before_char = substr( $string_before_char, length( $state->{prefix}{other} ) );
