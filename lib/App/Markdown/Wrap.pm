@@ -13,9 +13,11 @@ use App::Markdown::Handler;
 use App::Markdown::Utils qw(format_quote_line);
 
 sub run {
-  my $class   = shift;
-  my %opt     = %{ shift() };
-  my $handler = App::Markdown::Handler->new( \%opt );
+  my $class             = shift;
+  my %opt               = %{ shift() };
+  my $handler           = App::Markdown::Handler->new( \%opt );
+  my $ideographic_space = qr/　/;
+  my $no_break_space    = qr/ /;
   local @ARGV = @_;
 
   set_environemnt_variable( \%opt );
@@ -24,6 +26,7 @@ sub run {
 
   while (<>) {
     chomp;
+    $_ =~ s/^(?:$ideographic_space|$no_break_space\s)+//;
     $_ .= "\n";
 
     my $current_prefix     = $handler->get("prefix");

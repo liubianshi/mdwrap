@@ -581,7 +581,7 @@ sub adjust_tonewsboat_image {
 sub quote {
   my ( $self, $line ) = @_;
   return if $line !~ m/\A\s*[>]/;
-  return if $line =~ m/\A\s{4,}/; ## 如缩进 4 个空格，那么应当成代码块处理
+  return if $line =~ m/\A\s{4,}/;    ## 如缩进 4 个空格，那么应当成代码块处理
   return if $self->{block}->get("type") ne "normal";
   $self->upload();
 
