@@ -145,6 +145,8 @@ sub _handle_inline_syntax_end {
   my $m = $endprobe->($state);
   return unless defined $m;
 
+  my $mark_only = ($state->{current_word}{len} == 0);
+
   $state->word_extend();
   my $end_len = $m->{end_len} // 1;
   for ( 1 .. ( $end_len - 1 ) ) {
@@ -154,9 +156,10 @@ sub _handle_inline_syntax_end {
 
   $state->{current_word}{len} -= $m->{conceal} // 0;
 
-  # 如果插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
+  # 除非语法结束是当前单词只剩语法标记符，那么
+  # 当插入捕获的语法单元后，该行会超长，那么需要先断行，将语法单元放入行首
   # $char 已经合入 $word, 因此判断是否折行时，无须考虑 $char
-  wrap_line($state);
+  wrap_line($state) unless $mark_only;
 
   $state->line_extend();
 

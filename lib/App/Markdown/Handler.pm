@@ -474,6 +474,20 @@ sub comment_line_as_sep {
   return;
 }
 
+# Link ref line are output as is
+sub linkref_line_as_sep {
+  my ( $self, $line ) = @_;
+  my $block = $self->{block};
+  return if $block->get("type") ne "normal";
+  if ($line =~ m/^ \s* \[\d+\]: \s+ http/imxs) {
+    $self->upload() unless $self->block_is_empty();
+    $self->{block}->extend("$line");
+    $self->upload( { wrap => 0, add_empty_line => 0 } );
+    return 1;
+  }
+  return;
+}
+
 # newsboat
 sub tonewsboat_fetch_meta_info {
   my ( $self, $line ) = @_;

@@ -103,6 +103,9 @@ sub run {
     # Table rows and comment lines are output as is
     next if $handler->comment_line_as_sep($_);
 
+    # Link ref line are output as is
+    next if $handler->linkref_line_as_sep($_);
+
     # newsboat
     if ( $opt{tonewsboat} ) {
       next if $handler->tonewsboat_fetch_meta_info($_);
