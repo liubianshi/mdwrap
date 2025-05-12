@@ -147,11 +147,13 @@ sub math {
   # end
   if (
     $btype eq "math"
-    and (( $mtype eq "markdown" and $line =~ m/\s*\$\$/ )
-      or ( $mtype eq "latex" and $line =~ m/\s*\\\]/ ) )
+    and (( $mtype eq "markdown" and $line =~ m/^(.*)(\$\$.*)$/ )
+      or ( $mtype eq "latex" and $line =~ m/^(.*)(\\\].*)$/ ) )
      )
   {
-    $block->extend($line);
+    my ($math_end, $math_suffix) = ($1, $2);
+    $block->extend($math_end =~ s/\s*$/\n/r) if ($math_end =~ m/\S/) ;
+    $block->extend($math_suffix =~ s/\s*\n$/\n/r);
     $self->upload();
     return 1;
   }
@@ -163,20 +165,39 @@ sub math {
   }
 
   # start
-  if ( $btype eq "normal" and $line =~ m/\s*(\$\$|\\\[)\s*$/ ) {
+  if ( $btype eq "normal" and $line =~ m/^ (.*) \s* (\$\$|\\\[) (.*) $ /xms ) {
+    my ($prefix, $marker, $math_start) = ($1, $2, $3);
+
+    if (defined $prefix and $prefix =~ m/\S/) {
+      chomp($prefix);
+      $block->extend("$prefix\n");
+    }
     $self->upload() unless $self->block_is_empty();
+    $block = $self->{block};
     $block->update(
       {
-        text => $line,
+        text => "$marker\n",
         type => "math",
         attr => {
           prefix         => $self->get("prefix"),
           wrap           => 0,
           add_empty_line => 0,
-          marker         => $1 eq '$$' ? "markdown" : "latex",
+          empty          => 0,
+          marker         => $marker eq '$$' ? "markdown" : "latex",
         }
       }
     );
+
+    if (($marker eq '$$' && $math_start =~ m/^(.*)(\$\$.*)$/) || $math_start =~ m/^(.*)(\\\].*)/) {
+      my ($math_end, $math_suffix) = ($1, $2);
+      $block->extend($math_end =~ s/\s*/\n/r) if $math_end =~ m/\S/;
+      $block->extend($math_suffix =~ s/\s*\n$/\n/r);
+      $self->upload();
+    }
+    elsif ($math_start =~ m/\S/) {
+      $block->extend($math_start =~ s/\s*\n$/\n/r)
+    }
+
     return 1;
   }
 

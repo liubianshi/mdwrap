@@ -9,10 +9,12 @@ use open ':std', ':encoding(UTF-8)';
 my %default_opts = (
   "line-width" => 80,
   "tonewsboat" => 0,
+  "wrap_sentence" => 1,
 );
 
 my %opts;
-GetOptions( \%opts, "line-width|w=i", "tonewsboat", );
+GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap_sentence!");
 
+# TODO: 在句子结尾处断行
 App::Markdown::Wrap->run( { %default_opts, %opts }, @ARGV );
 
