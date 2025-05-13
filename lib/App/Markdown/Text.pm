@@ -16,14 +16,15 @@ our @EXPORT_OK = qw(wrap set_environemnt_variable);
 
 # 配置常量
 use constant {
-  DEFAULT_LINE_WIDTH  => 80,      # 默认行宽
-  SPACE               => " ",     # 空格字符
-  NEW_LINE            => "\n",    # 换行符
-  SEPARATOR_SYMBOL    => "┄",     # 分隔线符号
-  MIN_REMAINING_SPACE => 4,       # 触发换行的最小剩余空间
-  MAX_CONSECUTIVE_NL  => 1,       # 允许的最大连续换行数
+  DEFAULT_LINE_WIDTH   => 80,      # 默认行宽
+  SPACE                => " ",     # 空格字符
+  NEW_LINE             => "\n",    # 换行符
+  SEPARATOR_SYMBOL     => "┄",     # 分隔线符号
+  SUPPORT_SHORTER_LINE => 10,       # 偏好短行
+  MAX_CONSECUTIVE_NL   => 1,       # 允许的最大连续换行数
 };
 
+my $REG_SENTENCE_END = qr/[,.:;?!]["')]?$/;
 my $WRAP_SENTENCE = 1;
 my $LINE_WIDTH    = DEFAULT_LINE_WIDTH;    # 当前行宽配置
 my $INLINE_SYNTAX = get_syntax_meta();
@@ -82,7 +83,6 @@ sub wrap {
   # 后处理并生成最终输出
   return _post_processing($state);
 }
-
 
 # 主字符处理逻辑
 sub _process_characters {
@@ -253,6 +253,8 @@ sub _handle_other_newline {
 # or the next character cannot be the start of a new line.
 sub _handle_wrap_forbidden {
   my ($state)        = @_;
+  return unless $state->{wrap_sentence};
+
   my $char_info      = $state->{current_char};
   my $next_char_info = $state->extract_next_char_info();
 
@@ -279,29 +281,45 @@ sub _handle_wrap_forbidden {
 sub _handle_with_remaining_room {
   my ($state)         = @_;
   my $char_info       = $state->{current_char};
-  my $remaining_space = remaining_space($state);
+  my ($remaining_space, $exceed_when_not_wrap) = remaining_space($state);
   return if $remaining_space <= 0;
+
+  my $wrap_sentence = $state->{wrap_sentence};
 
   if ( $char_info->{width} == 0 ) {
     $state->upload_word();
-  }
-  elsif ( $char_info->{char} eq SPACE ) {
-    $state->upload_non_word_character();
-    if (not $state->{wrap_sentence} and $state->{current_sentence}{str} =~ m/[,.:;?!]["')]?\s+$/) {
-      $state->line_extend();
-    }
-  }
-  elsif ( $char_info->{type} ne "OTHER" ) {
-    $state->upload_non_word_character();
-    my $char = $char_info->{char};
-    if (not $state->{wrap_sentence} and grep {$char eq $_} qw{、 。 ） ， ． ： ； ？ }) {
-      $state->line_extend();
-    }
-  }
-  else {
-    $state->word_extend();
+    $state->push_line() if $wrap_sentence and $exceed_when_not_wrap >= 0;
+    return 1
   }
 
+  if ( $char_info->{char} eq SPACE ) {
+    $state->upload_word();
+    my $sentence_end = (not $wrap_sentence and $state->{current_sentence}{str} =~ m/$REG_SENTENCE_END/);
+    $state->line_extend() if $sentence_end;
+    if (($exceed_when_not_wrap >= 0 and ($wrap_sentence or $sentence_end))
+        or (not $wrap_sentence and _sentence_end($state->{current_line}{str}))
+    ) {
+      $state->push_line();
+      return 1;
+    }
+    $state->upload_non_word_character();
+    return 1
+  }
+
+  if ( $char_info->{type} ne "OTHER" ) {
+    my $char = $char_info->{char};
+    $state->upload_non_word_character();
+    if ($state->{wrap_sentence}) {
+      $state->push_line() if $exceed_when_not_wrap >= 0;
+    }
+    elsif (grep {$char eq $_} qw{、 。 ） ， ． ： ； ？ }) {
+      $state->line_extend();
+      $state->push_line() if $exceed_when_not_wrap >= 0 or _sentence_end($char);
+    }
+    return 1;
+  }
+
+  $state->word_extend();
   return 1;
 }
 
@@ -340,26 +358,43 @@ sub _handle_character_space {
   my $char = $char_info->{char};
   return unless $char eq "" or $char =~ m/\A \s+ \z/mxs;
 
-  if ( $state->{current_word}{str} ne SPACE and $state->{current_word}{str} ne "" ) {
-    $state->upload_word();
-  }
-
+  my $line = $state->{current_line};
   # 可以在句子内部折行时，在空格处断行
   if ($state->{wrap_sentence}) {
+    if ($line->{str} eq "") {
+      $state->line_extend();
+      $state->push_line();
+      return 1;
+    }
     $state->push_line();
+    $state->word_extend();
+    if ($state->{current_word}{str} =~ s/^(\s+)//) {
+      $state->{current_word}{len} -= length($1);
+    }
+    $state->upload_word() if $state->{current_word}{str} ne "";
+    return 1;
   }
+
   # 否则，只能在句子末尾断行，或到
-  elsif (
-    $state->{current_sentence}{str} =~ m/[,.:;?!]["')]?$/
-    or $char eq ""
-  ) {
-    $state->line_extend();
+  $state->upload_word();
+  if ($state->{current_sentence}{str} =~ m/$REG_SENTENCE_END/ or $char eq "") {
+    if ($line->{str} eq "") {
+      $state->line_extend();
+      $state->push_line();
+      return 1;
+    }
+
     $state->push_line();
+    if ($state->{current_sentence}{str} =~ s/^(\s+)//) {
+      $state->{current_sentence}{len} -= length($1);
+    }
+    $state->line_extend() if $state->{current_sentence}{str} ne "";
+    if (not $state->{wrap_sentence} and _sentence_end($state->{current_line}{str})) {
+      $state->push_line();
+      return 1;
+    }
   }
-  # 如果不是句子末尾，则延长句子，不进行断行
-  else {
-    $state->upload_non_word_character();
-  }
+  $state->upload_non_word_character();
 
   return 1;
 }
@@ -375,27 +410,35 @@ sub _handle_character_cjk {
   my $word      = $state->{current_word};
 
   # 仅处理CJK字符和中文标点
-  return if none { $char_info->{type} eq $_ } qw(CJK CJK_PUN);
+  return if $char_info->{type} ne "CJK" and $char_info->{type} !~ 'PUN';
 
-  $state->upload_non_word_character();
-
-  if ($state->{wrap_sentence}) {
-    $state->push_line();  # 创建新行并应用other前缀
-
-  # 阶段2：处理后续空格（CJK与半角字符之间多余的空格，在换行时应该移除）
-  }
-  elsif (grep {$char eq $_} qw{、 。 ） ， ． ： ； ？ }) {
-    $state->line_extend();
-    $state->push_line();
-  }
-  else {
+  if (not $state->{wrap_sentence} and none {$char eq $_} qw{、 。 ） ， ． ： ； ？ }) {
+    $state->upload_non_word_character();
     return 1;
   }
 
-  my $next_char = $state->extract_next_char_info(0);  # 下一个字符
-  if ($next_char && $next_char->{char} =~ /\s/) {
-    $state->{pos} += 1;  # 跳过空格字符
+  if ($state->{current_line}{str} eq "") {
+    $state->upload_non_word_character();
+    $state->line_extend() unless $state->{wrap_sentence};
+    $state->push_line();
+    return 1;
   }
+
+  $state->push_line();  # 创建新行并应用other前缀
+  if ($state->{wrap_sentence}) {
+    if ($state->{current_word}{str} =~ s/^(\s+)//) {
+      $state->{current_word}{len} -= length($1);
+    }
+  }
+  else {
+    if ($state->{current_sentence}{str} =~ s/^(\s+)//) {
+      $state->{current_sentence}{len} -= length($1);
+    }
+  }
+  $state->upload_non_word_character();
+  $state->line_extend() unless $state->{wrap_sentence};
+  $state->push_line() if _sentence_end($char);
+
   return 1;  # 已处理CJK字符
 }
 
@@ -404,8 +447,16 @@ sub _handle_character_cjk {
 # 其他字符会先存在 current word 中，直到遇到非单词字符，再进行换行处理
 sub _handle_default_case {
   my $state = shift;
+  $state->push_line();  # 创建新行并应用other前缀
   if ($state->{wrap_sentence}) {
-    $state->push_line();
+    if ($state->{current_word}{str} =~ s/^(\s+)//) {
+      $state->{current_word}{len} -= length($1);
+    }
+  }
+  else {
+    if ($state->{current_sentence}{str} =~ s/^(\s+)//) {
+      $state->{current_sentence}{len} -= length($1);
+    }
   }
   $state->word_extend();
   return 1;
@@ -440,7 +491,10 @@ sub wrap_line {
 sub cal_remaining_space {
   my ( $origin, $new, $line_width ) = @_;
   $line_width //= $LINE_WIDTH;
-  return ( $line_width - $origin ) - ( $new - $line_width );
+  my $exceed_space = $new - $line_width;
+  my $origin_remainning = $line_width - $origin - SUPPORT_SHORTER_LINE;
+  my $remaining_space = ($origin_remainning > 0 ? $origin_remainning : 0) - $exceed_space;
+  return $remaining_space, $exceed_space;
 }
 
 sub remaining_space {
@@ -454,10 +508,10 @@ sub remaining_space {
   my $total_visible_length = $line->{len} + $sentence->{len} + $word->{len} + $char->{width};
 
   # 基础剩余空间计算
-  my $remaining = cal_remaining_space( $line->{len}, $total_visible_length );
+  my ($remaining, $exceed) = cal_remaining_space( $line->{len}, $total_visible_length );
 
   # 处理长单词溢出情况
-  if ( $remaining <= 4 ) {
+  if ( $remaining <= 10 ) {
     my $newline = {str => $line->{str}, len => $line->{len}};
 
     my $string_extend = App::Markdown::Text::State->can("_string_extend");
@@ -466,10 +520,14 @@ sub remaining_space {
     $string_extend->($newline, { str => $char->{char}, len => $char->{width} });
 
     $total_visible_length = $newline->{len};
-    $remaining            = cal_remaining_space( $line->{len}, $total_visible_length );
+    ($remaining, $exceed) = cal_remaining_space( $line->{len}, $total_visible_length );
   }
 
-  return $remaining;
+  if (wantarray) {
+    return $remaining, $exceed;
+  } else {
+    return $remaining;
+  }
 }
 
 # 换行符的处理：是当成空格处理，还是直接忽略
@@ -521,8 +579,8 @@ sub _clean_input_text {
 # 最终处理逻辑
 sub _finalize_processing {
   my ($state) = @_;
-
-  $state->line_extend();
+  $state->upload_word();
+  $state->line_extend() unless $state->{wrap_sentence};
   $state->push_line();
   $state->{pos} = $state->{text_length};
 }
@@ -538,6 +596,11 @@ sub _generate_output {
   $result .= "\n" if ${ $state->{original_text} } =~ /\n$/;
 
   return $result;
+}
+
+sub _sentence_end {
+  my $str = shift or return;
+  return (any {$str eq $_} qw{ 。 ． ； ？ } or $str =~ m/[.;?!]["')]?$/);
 }
 
 # 当前是否允许折行

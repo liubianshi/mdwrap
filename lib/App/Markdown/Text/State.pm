@@ -25,6 +25,7 @@ sub new {
     current_word      => _string_init(),
     current_sentence  => _string_init(),
     current_char      => _char_init(),
+    previous_char     => _char_init(),
     wrap_sentence     => $args->{wrap_sentence},
     keep_origin_wrap  => $args->{keep_origin_wrap},
     inline_syntax_end => {},                 # 新增语法结束标记栈
@@ -96,6 +97,7 @@ sub is_valid_char {
 
 sub next {
   my $self = shift;
+  $self->{previous_char} = $self->{current_char};
   $self->{current_char} = $self->extract_next_char_info();
   $self->{pos} += 1;
   return $self->{current_char};
@@ -177,7 +179,9 @@ sub _string_extend {
     or not defined $right->{str}
     or not defined $right->{len};
 
-  if ( defined $opt and defined $opt->{noprocess} ) {
+  if ((defined $opt and defined $opt->{noprocess})
+      or $left->{str} eq "")
+  {
     $left->{str} .= $right->{str};
     $left->{len} += $right->{len};
     return
