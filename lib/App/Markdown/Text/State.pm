@@ -26,6 +26,7 @@ sub new {
     current_sentence  => _string_init(),
     current_char      => _char_init(),
     wrap_sentence     => $args->{wrap_sentence},
+    keep_origin_wrap  => $args->{keep_origin_wrap},
     inline_syntax_end => {},                 # 新增语法结束标记栈
     prefix            => { first => $args->{prefix_first}, other => $args->{prefix_other} },
   };

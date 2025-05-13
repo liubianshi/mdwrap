@@ -27,6 +27,7 @@ use constant {
 my $WRAP_SENTENCE = 1;
 my $LINE_WIDTH    = DEFAULT_LINE_WIDTH;    # 当前行宽配置
 my $INLINE_SYNTAX = get_syntax_meta();
+my $KEEP_ORIGIN_WRAP = 0;
 
 sub set_environemnt_variable {
   my $opt = shift;
@@ -46,6 +47,7 @@ sub set_environemnt_variable {
   }
 
   $WRAP_SENTENCE = $opt->{"wrap-sentence"} if defined $opt->{"wrap-sentence"};
+  $KEEP_ORIGIN_WRAP = $opt->{"keep-origin-wrap"} if defined $opt->{"keep-origin-wrap"};
 }
 
 sub wrap {
@@ -55,6 +57,7 @@ sub wrap {
     prefix_other => "",
     content => \(""),
     wrap_sentence => $WRAP_SENTENCE,
+    keep_origin_wrap => $KEEP_ORIGIN_WRAP,
     %{$args}
   };
 
@@ -234,6 +237,12 @@ sub _handle_inline_syntax_start {
 sub _handle_other_newline {
   my $state = shift;
   return 0 unless $state->{current_char}{char} eq NEW_LINE;
+  if ($state->{keep_origin_wrap}) {
+    $state->upload_word();
+    $state->line_extend() unless $state->{wrap_sentence};
+    $state->push_line();
+    return 1;
+  }
 
   my $sub_char = update_when_new_line($state);
   return ($sub_char eq "");
@@ -249,8 +258,7 @@ sub _handle_wrap_forbidden {
 
   my $char      = $char_info->{char};
   my $char_attr = $char_info->{type};
-  return unless $char_attr eq "PUN_FORBIT_BREAK_BEFORE" || grep { $_ eq $char } split( //, q{'",.!)} );
-
+  return unless $char_attr eq "PUN_FORBIT_BREAK_BEFORE" || grep { $_ eq $char } split( //, q{'",.!;:?])} );
   my $string_before_char = $state->{current_line}{str}
                          . $state->{current_sentence}{str}
                          . $state->{current_word}{str};
@@ -279,9 +287,16 @@ sub _handle_with_remaining_room {
   }
   elsif ( $char_info->{char} eq SPACE ) {
     $state->upload_non_word_character();
+    if (not $state->{wrap_sentence} and $state->{current_sentence}{str} =~ m/[,.:;?!]["')]?\s+$/) {
+      $state->line_extend();
+    }
   }
   elsif ( $char_info->{type} ne "OTHER" ) {
     $state->upload_non_word_character();
+    my $char = $char_info->{char};
+    if (not $state->{wrap_sentence} and grep {$char eq $_} qw{、 。 ） ， ． ： ； ？ }) {
+      $state->line_extend();
+    }
   }
   else {
     $state->word_extend();
@@ -445,7 +460,7 @@ sub remaining_space {
   if ( $remaining <= 4 ) {
     my $newline = {str => $line->{str}, len => $line->{len}};
 
-    my $string_extend = &App::Markdown::Text::State->_string_extend;
+    my $string_extend = App::Markdown::Text::State->can("_string_extend");
     $string_extend->($newline, $sentence);
     $string_extend->($newline, $word);
     $string_extend->($newline, { str => $char->{char}, len => $char->{width} });

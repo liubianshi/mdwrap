@@ -10,11 +10,11 @@ my %default_opts = (
   "line-width" => 80,
   "tonewsboat" => 0,
   "wrap-sentence" => 1,
+  "keep-origin-wrap" => 0,
 );
 
 my %opts;
-GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap_sentence!");
+GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap-sentence!", "keep-origin-wrap");
 
-# TODO: 在句子结尾处断行
 App::Markdown::Wrap->run( { %default_opts, %opts }, @ARGV );
 
