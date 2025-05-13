@@ -9,7 +9,12 @@ use Text::CharWidth      qw(mbswidth mblen mbwidth);
 sub new {
   my $class = shift;
   my $args = shift;
-  $args = { prefix_first => "", prefix_other => "", content => \(""), %{$args} };
+  $args = {
+    prefix_first => "",
+    prefix_other => "",
+    content => \(""),
+    %{$args}
+  };
 
   my $self = {
     lines             => [],
@@ -18,7 +23,9 @@ sub new {
     pos               => 0,
     current_line      => _string_init($args->{prefix_first}),
     current_word      => _string_init(),
+    current_sentence  => _string_init(),
     current_char      => _char_init(),
+    wrap_sentence     => $args->{wrap_sentence},
     inline_syntax_end => {},                 # 新增语法结束标记栈
     prefix            => { first => $args->{prefix_first}, other => $args->{prefix_other} },
   };
@@ -62,8 +69,7 @@ sub init {
   my $self  = shift;
   my $key   = shift;
   my $value = shift // ( $key eq "current_line" ? $self->{prefix}{other} : "" );
-  if    ( $key eq "current_line" ) { $self->{$key} = _string_init($value) }
-  elsif ( $key eq "current_word" ) { $self->{$key} = _string_init($value) }
+  $self->{$key} = _string_init($value)
 }
 
 sub update {
@@ -109,47 +115,83 @@ sub word_extend {
   return $self;
 }
 
+sub sentence_extend {
+  my $self      = shift;
+  my $opt       = shift || {};
+  my $sentence  = $self->{current_sentence};
+  my $word      = $self->{current_word};
+  _string_extend($sentence, $word, $opt);
+  $self->init("current_word");
+  return $self;
+}
+
 sub line_extend {
   my $self      = shift;
   my $opt       = shift || {};
   my $line      = $self->{current_line};
-  my $word      = $self->{current_word};
-  my $no_update = ( defined $opt->{update} && $opt->{update} == 0 );
-  if ($no_update) {
-    $line = $opt->{line} if defined $opt->{line};
-    $word = $opt->{word} if defined $opt->{word};
-    $line = { str => $line->{str}, len => $line->{len} };
-    $word = { str => $word->{str}, len => $word->{len} };
+  my $source    = $self->{wrap_sentence} ? "current_word" : "current_sentence";
+  my $new       = $self->{$source};
+
+  _string_extend($line, $new, $opt);
+  $self->init($source);
+  return $self;
+}
+
+sub upload_word {
+  my $self = shift;
+  if ($self->{wrap_sentence}) {
+    $self->line_extend();
   }
-
-  return ( $no_update ? $line : $self ) if $word->{len} == 0 and $word->{str} eq "";
-
-  if ( $line->{len} == 0 and $line->{str} eq "" ) {
-    return $word if $no_update;
-    $self->{current_line} = $word;
-    $self->init("current_word");
-    return $self;
+  else {
+    $self->sentence_extend();
   }
+  return $self;
+}
 
-  # No additional processing is done when splicing characters
+sub upload_non_word_character {
+  my $self = shift;
+  $self->upload_word();
+  $self->word_extend();
+  $self->upload_word();
+  return $self;
+}
+
+sub _char_init {
+  return { char => "", width => 0, type => "OTHER" };
+}
+
+sub _string_init {
+  my $str = shift // "";
+  my $len = shift // mbswidth($str);
+  return { str => $str, len => $len };
+}
+
+sub _string_extend {
+  my ($left, $right, $opt) = @_;
+  return if
+    not defined $left
+    or not defined $right
+    or not defined $left->{str}
+    or not defined $left->{len}
+    or not defined $right->{str}
+    or not defined $right->{len};
+
   if ( defined $opt and defined $opt->{noprocess} ) {
-    $line->{str} .= $word->{str};
-    $line->{len} += $word->{len};
-    return $line if $no_update;
-    $self->init("current_word");
-    return $self;
+    $left->{str} .= $right->{str};
+    $left->{len} += $right->{len};
+    return
   }
 
   my @no_extra_space_after  = ( q( ), qw( $ * _ =   [ / ~) );
   my @no_extra_space_before = ( q(,), qw( $ * _ = . ] / ~) );
-  my $char_last             = substr( $line->{str}, -1, 1 );
-  my $char_first            = substr( $word->{str},  0, 1 );
+  my $char_last             = substr( $left->{str},  -1, 1 );
+  my $char_first            = substr( $right->{str},  0, 1 );
   my $attr_last             = _char_attr( ord $char_last );
   my $attr_first            = _char_attr( ord $char_first );
 
   # Insert spaces when splicing text when certain conditions are met
   if (
-        $word->{len} > 0
+        $right->{len} > 0
     and ( none { $char_last eq $_ } @no_extra_space_after )
     and ( none { $char_first eq $_ } @no_extra_space_before )
 
@@ -165,57 +207,35 @@ sub line_extend {
     and ( ( $attr_last eq "OTHER" and $attr_first eq "CJK" ) or ( $attr_last eq "CJK" and $attr_first eq "OTHER" ) )
     )
   {
-    $line->{str} .= " " . $word->{str};
-    $line->{len} += 1 + $word->{len};
+    $left->{str} .= " " . $right->{str};
+    $left->{len} += 1 + $right->{len};
   }
 
   # 应对 rime_ls bug 的临时解决方案 ----------------------------------- {{{
-  elsif ( $line->{str} =~ m/\[\s\z/ and $attr_first eq "CJK" ) {
-    $line->{str} = substr( $line->{str}, 0, -1 ) . $word->{str};
-    $line->{len} += $word->{len} - 1;
+  elsif ( $left->{str} =~ m/\[\s\z/ and $attr_first eq "CJK" ) {
+    $left->{str} = substr( $left->{str}, 0, -1 ) . $right->{str};
+    $left->{len} += $right->{len} - 1;
   }
-  elsif ( ( $attr_first eq "CJK" and $line->{str} =~ m/[A-z0-9.)][*_]+\z/xms )
-    or ( $attr_last eq "CJK" and $word->{str} =~ m/[*_]+[A-z0-9.(]/ ) )
+  elsif ( ( $attr_first eq "CJK" and $left->{str} =~ m/[A-z0-9.)][*_]+\z/xms )
+    or ( $attr_last eq "CJK" and $right->{str} =~ m/[*_]+[A-z0-9.(]/ ) )
   {
-    $line->{str} .= " " . $word->{str};
-    $line->{len} += 1 + $word->{len};
+    $left->{str} .= " " . $right->{str};
+    $left->{len} += 1 + $right->{len};
   }
   elsif ( any { $char_first eq $_ } ("]")
     and $char_last eq " "
-    and defined substr( $line->{str}, -2, 1 )
-    and _char_attr( ord substr( $line->{str}, -2, 1 ) ) eq "CJK" )
+    and defined substr( $left->{str}, -2, 1 )
+    and _char_attr( ord substr( $left->{str}, -2, 1 ) ) eq "CJK" )
   {
-    $line->{str} = substr( $line->{str}, 0, -1 ) . $word->{str};
-    $line->{len} += $word->{len} - 1;
+    $left->{str} = substr( $left->{str}, 0, -1 ) . $right->{str};
+    $left->{len} += $right->{len} - 1;
   }
 
   # ------------------------------------------------------------------- }}}
   else {
-    $line->{str} .= $word->{str};
-    $line->{len} += $word->{len};
+    $left->{str} .= $right->{str};
+    $left->{len} += $right->{len};
   }
-
-  return $line if $no_update;
-  $self->init("current_word");
-  return $self;
-}
-
-sub upload_non_word_character {
-  my $self = shift;
-  $self->line_extend();
-  $self->word_extend();
-  $self->line_extend();
-  return $self;
-}
-
-sub _char_init {
-  return { char => "", width => 0, type => "OTHER" };
-}
-
-sub _string_init {
-  my $str = shift // "";
-  my $len = shift // mbswidth($str);
-  return { str => $str, len => $len };
 }
 
 1;

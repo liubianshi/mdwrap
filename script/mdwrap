@@ -9,7 +9,7 @@ use open ':std', ':encoding(UTF-8)';
 my %default_opts = (
   "line-width" => 80,
   "tonewsboat" => 0,
-  "wrap_sentence" => 1,
+  "wrap-sentence" => 1,
 );
 
 my %opts;
