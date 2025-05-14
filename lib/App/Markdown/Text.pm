@@ -20,7 +20,7 @@ use constant {
   SPACE                => " ",     # 空格字符
   NEW_LINE             => "\n",    # 换行符
   SEPARATOR_SYMBOL     => "┄",     # 分隔线符号
-  SUPPORT_SHORTER_LINE => 10,       # 偏好短行
+  SUPPORT_SHORTER_LINE => 10,      # 偏好短行
   MAX_CONSECUTIVE_NL   => 1,       # 允许的最大连续换行数
 };
 
@@ -261,6 +261,7 @@ sub _handle_wrap_forbidden {
   my $char      = $char_info->{char};
   my $char_attr = $char_info->{type};
   return unless $char_attr eq "PUN_FORBIT_BREAK_BEFORE" || grep { $_ eq $char } split( //, q{'",.!;:?])} );
+
   my $string_before_char = $state->{current_line}{str}
                          . $state->{current_sentence}{str}
                          . $state->{current_word}{str};
