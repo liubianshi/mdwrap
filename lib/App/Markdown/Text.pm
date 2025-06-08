@@ -265,7 +265,9 @@ sub _handle_wrap_forbidden {
   my $string_before_char = $state->{current_line}{str}
                          . $state->{current_sentence}{str}
                          . $state->{current_word}{str};
-  $string_before_char = substr( $string_before_char, length( $state->{prefix}{other} ) );
+  if (length($string_before_char) >= length($state->{prefix}{other}) ) {
+    $string_before_char = substr( $string_before_char, length( $state->{prefix}{other} ) );
+  }
   if ( $string_before_char =~ m/^\s*$/ and scalar @{ $state->{lines} } > 0 ) {
     $state->{lines}[-1] .= $char;
   }
