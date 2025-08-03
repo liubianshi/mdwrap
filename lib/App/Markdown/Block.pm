@@ -142,8 +142,11 @@ sub tostring {
   if ( $self->get("wrap") ) {
 
     # 自动换行模式
-    my $indent = $prefix . indent($content);
-    $formatted = ${ wrap({prefix_first => $prefix, prefix_other => $indent, content => \$content }) };
+    my $indent       = indent($content);
+    my $prefix_first = $prefix . $indent->[0];
+    my $prefix_other = $prefix_first . $indent->[1];
+    my $args         = { prefix_first => $prefix_first, prefix_other => $prefix_other, content => \$content };
+    $formatted = ${ wrap($args) };
   }
   else {
     # 直接添加前缀模式

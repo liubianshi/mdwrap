@@ -59,28 +59,43 @@ sub is_code_block {
 # 3. 列表项前缀（*, - 等）
 # 4. 定义列表前缀（:）
 sub indent {
-  my $str = shift;
+  my ($str) = @_;
 
-  # 定义各类前缀的正则表达式
-  my $todo_regex  = qr/\[\w?\]\s+/xms;                                 # 匹配待办项如 [x]
-  my $list_regex  = qr/(?:[-•*+]|\d+\.) \s+ (?:$todo_regex\s)?/xms;    # 列表项
-  my $def_regex   = qr/(?:\: \s+)/xms;                                 # 定义列表
-  my $quote_regex = qr/(?:\>\s)+/xms;                                  # 引用块
+  # Regex for a markdown task list item, e.g., "[ ]", "[x]".
+  my $todo_regex = qr/\[\w?\]\s+/xms;
 
-  # 组合匹配模式
-  my $prefix = "";
+  # Regex for a list item bullet, e.g., "-", "*", "1.".
+  # It can optionally be followed by a task list item.
+  my $list_regex = qr/(?:[-•*+]|\d+\.) \s+ (?:$todo_regex\s)?/xms;
+
+  # Regex for a definition list item, e.g., ": ".
+  my $def_regex = qr/(?:\: \s+)/xms;
+
+  # Regex for a blockquote prefix, e.g., "> ".
+  my $quote_regex = qr/(?:\>\s)+/xms;
+
+  # Match the line's prefixes in order: indentation, blockquote, and list/definition.
   if (
-    $str =~ m{\A
-    (\s*)                     # 基础缩进空格
-    ($quote_regex?)           # 引用标记
-    ((?:$list_regex|$def_regex)?)  # 列表或定义标记
-  }xms
+    $str =~ m{
+            \A                             # Start of the string
+            (\s*)                          # $1: Capture leading whitespace (base indentation)
+            ($quote_regex?)                # $2: Capture optional blockquote prefix
+            ((?:$list_regex|$def_regex)?)  # $3: Capture optional list or definition prefix
+        }xms
     )
   {
-    # 组合前缀：缩进 + 引用标记 + 列表/定义标记的等效空格
-    $prefix = $1 . $2 . ( " " x length($3) );
+    # Assign captures to variables, providing empty string defaults for optional captures.
+    my ( $base_indent, $quote_prefix, $list_def_prefix ) = ( $1 // '', $2 // '', $3 // '' );
+
+    # For the next line, keep the base indent and quote prefix.
+    # Replace the list/definition marker with spaces to maintain alignment.
+    my $structure_prefix = $quote_prefix . ( ' ' x length($list_def_prefix) );
+
+    return [ $base_indent, $structure_prefix ];
   }
-  return $prefix;
+
+  # If the line structure doesn't match, return empty prefixes.
+  return [ '', '' ];
 }
 
 # 格式化引用块行
