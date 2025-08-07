@@ -161,6 +161,8 @@ sub tostring {
     $formatted .= $prefix . "\n";
   }
 
+  $formatted =~ s/\h+\n/\n/m;
+
   return $formatted;
 }
 
