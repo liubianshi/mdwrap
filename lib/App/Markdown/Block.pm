@@ -150,7 +150,9 @@ sub tostring {
   }
   else {
     # 直接添加前缀模式
-    $formatted = join( "\n", map { $prefix . $_ } split( /\n/, $content ) );
+    my @contents = split /\n/, $content;
+    push @contents, "" if scalar @contents == 0;
+    $formatted = join( "\n", map { $prefix . $_ } @contents );
     $formatted .= "\n";    # 确保块结尾换行
   }
 

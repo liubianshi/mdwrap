@@ -19,6 +19,7 @@ use constant {
   DEFAULT_LINE_WIDTH   => 80,      # 默认行宽
   SPACE                => " ",     # 空格字符
   NEW_LINE             => "\n",    # 换行符
+  ZERO_WIDTH_SPACE     => '​',     # 零宽空格
   SEPARATOR_SYMBOL     => "┄",     # 分隔线符号
   SUPPORT_SHORTER_LINE => 10,      # 偏好短行
   MAX_CONSECUTIVE_NL   => 1,       # 允许的最大连续换行数
@@ -90,6 +91,7 @@ sub _process_characters {
 
   # 处理优先级队列（顺序敏感）
   my @handlers = (
+    \&_handle_zero_width_space,       # 0. 处理零宽空格
     \&_handle_final_newline,          # 1. 最终换行符处理
     \&_handle_inline_syntax,          # 2. 行内语法标记
     \&_handle_other_newline,          # 3. 换行符转换
@@ -112,7 +114,17 @@ sub _process_characters {
   }
 }
 
+# 0. 处理零宽空格
+
 # 处理最终换行符（优先级 1）
+sub _handle_zero_width_space {
+  my $state = shift;
+  return 0 unless $state->{current_char}{char} eq ZERO_WIDTH_SPACE;
+  $state->word_extend();
+  $state->upload_word();
+  return 1;
+}
+
 sub _handle_final_newline {
   my $state = shift;
   return 0 unless $state->{current_char}{char} eq NEW_LINE && $state->at_end_of_text();
@@ -241,6 +253,11 @@ sub _handle_other_newline {
   if ( $state->{keep_origin_wrap} ) {
     $state->upload_word();
     $state->line_extend() unless $state->{wrap_sentence};
+    $state->push_line();
+    return 1;
+  }
+  elsif ( $state->{previous_char}{char} eq ZERO_WIDTH_SPACE ) {
+    $state->line_extend();
     $state->push_line();
     return 1;
   }

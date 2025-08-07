@@ -104,7 +104,7 @@ sub normal_line {
 
   # 保留特意插入的空行
   if ( $line !~ m/\S/ ) {
-    if ( $self->{prefix} ne "" && self->block_is_empty() ) {
+    if ( $self->block_is_empty() ) {
       my $last_block = $self->{last_block};
       if ( defined $last_block and not $last_block->get("add_empty_line") ) {
         $self->{block}->extend("\n");
