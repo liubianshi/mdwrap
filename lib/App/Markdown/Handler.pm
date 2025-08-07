@@ -104,7 +104,7 @@ sub normal_line {
 
   # 保留特意插入的空行
   if ( $line !~ m/\S/ ) {
-    if ( $self->block_is_empty() ) {
+    if ( $self->{prefix} ne "" && self->block_is_empty() ) {
       my $last_block = $self->{last_block};
       if ( defined $last_block and not $last_block->get("add_empty_line") ) {
         $self->{block}->extend("\n");
@@ -151,9 +151,9 @@ sub math {
       or ( $mtype eq "latex" and $line =~ m/^(.*)(\\\].*)$/ ) )
      )
   {
-    my ($math_end, $math_suffix) = ($1, $2);
-    $block->extend($math_end =~ s/\s*$/\n/r) if ($math_end =~ m/\S/) ;
-    $block->extend($math_suffix =~ s/\s*\n$/\n/r);
+    my ( $math_end, $math_suffix ) = ( $1, $2 );
+    $block->extend( $math_end    =~ s/\s*$/\n/r ) if ( $math_end =~ m/\S/ );
+    $block->extend( $math_suffix =~ s/\s*\n$/\n/r );
     $self->upload();
     return 1;
   }
@@ -166,9 +166,9 @@ sub math {
 
   # start
   if ( $btype eq "normal" and $line =~ m/^ (.*) \s* (\$\$|\\\[) (.*) $ /xms ) {
-    my ($prefix, $marker, $math_start) = ($1, $2, $3);
+    my ( $prefix, $marker, $math_start ) = ( $1, $2, $3 );
 
-    if (defined $prefix and $prefix =~ m/\S/) {
+    if ( defined $prefix and $prefix =~ m/\S/ ) {
       chomp($prefix);
       $block->extend("$prefix\n");
     }
@@ -188,14 +188,14 @@ sub math {
       }
     );
 
-    if (($marker eq '$$' && $math_start =~ m/^(.*)(\$\$.*)$/) || $math_start =~ m/^(.*)(\\\].*)/) {
-      my ($math_end, $math_suffix) = ($1, $2);
-      $block->extend($math_end =~ s/\s*/\n/r) if $math_end =~ m/\S/;
-      $block->extend($math_suffix =~ s/\s*\n$/\n/r);
+    if ( ( $marker eq '$$' && $math_start =~ m/^(.*)(\$\$.*)$/ ) || $math_start =~ m/^(.*)(\\\].*)/ ) {
+      my ( $math_end, $math_suffix ) = ( $1, $2 );
+      $block->extend( $math_end    =~ s/\s*/\n/r ) if $math_end =~ m/\S/;
+      $block->extend( $math_suffix =~ s/\s*\n$/\n/r );
       $self->upload();
     }
-    elsif ($math_start =~ m/\S/) {
-      $block->extend($math_start =~ s/\s*\n$/\n/r)
+    elsif ( $math_start =~ m/\S/ ) {
+      $block->extend( $math_start =~ s/\s*\n$/\n/r );
     }
 
     return 1;
@@ -500,7 +500,7 @@ sub linkref_line_as_sep {
   my ( $self, $line ) = @_;
   my $block = $self->{block};
   return if $block->get("type") ne "normal";
-  if ($line =~ m/^ \s* \[\d+\]: \s+ http/imxs) {
+  if ( $line =~ m/^ \s* \[\d+\]: \s+ http/imxs ) {
     $self->upload() unless $self->block_is_empty();
     $self->{block}->extend("$line");
     $self->upload( { wrap => 0, add_empty_line => 0 } );
