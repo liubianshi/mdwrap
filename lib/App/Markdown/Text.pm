@@ -91,16 +91,17 @@ sub _process_characters {
 
   # 处理优先级队列（顺序敏感）
   my @handlers = (
-    \&_handle_zero_width_space,       # 0. 处理零宽空格
-    \&_handle_final_newline,          # 1. 最终换行符处理
-    \&_handle_inline_syntax,          # 2. 行内语法标记
-    \&_handle_other_newline,          # 3. 换行符转换
-    \&_handle_wrap_forbidden,         # 4. 禁止换行场景
-    \&_handle_with_remaining_room,    # 5. 存在剩余空间的情况
-    \&_handle_line_end_with_space,    # 6. 空格结尾时的断行处理
-    \&_handle_character_space,        # 7. 末尾的空格处理
-    \&_handle_character_cjk,          # 8. CJK特殊处理
-    \&_handle_default_case            # 9. 默认处理
+    \&_handle_zero_width_space,         # 处理零宽空格
+    \&_handle_final_newline,            # 最终换行符处理
+    \&_handle_inline_syntax,            # 行内语法标记
+    \&_handle_other_newline,            # 换行符转换
+    \&_handle_wrap_forbidden_after,     # 禁止在当前字符之后换行
+    \&_handle_wrap_forbidden_before,    # 禁止在当前字符之前换行
+    \&_handle_with_remaining_room,      # 存在剩余空间的情况
+    \&_handle_line_end_with_space,      # 空格结尾时的断行处理
+    \&_handle_character_space,          # 末尾的空格处理
+    \&_handle_character_cjk,            # CJK特殊处理
+    \&_handle_default_case              # 默认处理
   );
 
   while ( $state->{pos} < $state->{text_length} ) {
@@ -114,9 +115,7 @@ sub _process_characters {
   }
 }
 
-# 0. 处理零宽空格
-
-# 处理最终换行符（优先级 1）
+# 处理零宽空格
 sub _handle_zero_width_space {
   my $state = shift;
   return 0 unless $state->{current_char}{char} eq ZERO_WIDTH_SPACE;
@@ -125,6 +124,7 @@ sub _handle_zero_width_space {
   return 1;
 }
 
+# 处理最终换行符
 sub _handle_final_newline {
   my $state = shift;
   return 0 unless $state->{current_char}{char} eq NEW_LINE && $state->at_end_of_text();
@@ -133,7 +133,7 @@ sub _handle_final_newline {
   return 1;
 }
 
-# 独立语法处理函数 (优先级 2)
+# 独立语法处理函数
 sub _handle_inline_syntax {
   my $state = shift;
   my $char  = $state->{current_char}{char};
@@ -246,7 +246,7 @@ sub _handle_inline_syntax_start {
   return 1;
 }
 
-# 处理换行符转换（优先级3）
+# 处理换行符转换
 sub _handle_other_newline {
   my $state = shift;
   return 0 unless $state->{current_char}{char} eq NEW_LINE;
@@ -266,10 +266,8 @@ sub _handle_other_newline {
   return ( $sub_char eq "" );
 }
 
-# 处理特殊标点符号（优先级 4）
-# line wrap are not allowed after the current letter
-# or the next character cannot be the start of a new line.
-sub _handle_wrap_forbidden {
+# line wrap are not allowed before the current letter
+sub _handle_wrap_forbidden_before {
   my ($state) = @_;
 
   # Early return if sentence wrapping is disabled
@@ -310,13 +308,53 @@ sub _handle_wrap_forbidden {
   else {
     # Extend current word and upload it
     $state->word_extend();
-    $state->upload_word() unless $next_char_info->{type} eq "OTHER";
+    $state->upload_word() if $char_info->{type} ne "OTHER" || $next_char_info->{type} ne "OTHER";
   }
 
   return 1;
 }
 
-# 存在足够空间的情况（优先级 5）
+# line wrap are not allowed after the current letter
+sub _handle_wrap_forbidden_after {
+  my ($state) = @_;
+
+  # Early return if sentence wrapping is disabled
+  return unless $state->{wrap_sentence};
+
+  my $char_info      = $state->{current_char};
+  my $next_char_info = $state->extract_next_char_info();
+  my $char           = $char_info->{char};
+  my $char_attr      = $char_info->{type};
+  my $next_char      = $next_char_info->{char};
+  my $next_char_attr = $next_char_info->{type};
+
+  # Define forbidden wrap characters for efficient lookup
+  my $forbidden_chars       = '\'",.!;:?])}';
+  my $forbidden_chars_after = '\'"(';
+  my %forbidden_chars       = map { $_ => 1 } split //, $forbidden_chars;
+  my %forbidden_chars_after = map { $_ => 1 } split //, $forbidden_chars_after;
+
+  # Check if next character is forbidden to start a line
+  return
+       unless $char_attr eq "PUN_FORBIT_BREAK_AFTER"
+    || exists $forbidden_chars_after{$char}
+    || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE"
+    || exists $forbidden_chars{$next_char};
+
+  if ( $char_info->{width} == 0 || $char eq SPACE ) {
+    $state->upload_word();
+  }
+  elsif ( $char_info->{type} ne "OTHER" ) {
+    $state->upload_non_word_character();
+  }
+  else {
+    $state->word_extend();
+  }
+
+  return 1;
+}
+
+# 存在足够空间的情况
 # whether the current line have enough room for the curren character
 sub _handle_with_remaining_room {
   my ($state) = @_;
@@ -363,7 +401,7 @@ sub _handle_with_remaining_room {
   return 1;
 }
 
-# the line ends by space (优先级 6)
+# the line ends by space
 sub _handle_line_end_with_space {
   my ($state) = @_;
   my $line    = $state->{current_line};
@@ -388,7 +426,7 @@ sub _handle_line_end_with_space {
   return 1;
 }
 
-# 没有空间的情况下处理空格符（优先级 7）
+# 没有空间的情况下处理空格符
 #
 # handle space
 sub _handle_character_space {
@@ -440,7 +478,7 @@ sub _handle_character_space {
   return 1;
 }
 
-# 处理中日韩字符（优先级 8）
+# 处理中日韩字符
 sub _handle_character_cjk {
   my ($state) = @_;
 
@@ -483,7 +521,7 @@ sub _handle_character_cjk {
   return 1;    # 已处理CJK字符
 }
 
-# 默认处理程序（优先级9）
+# 默认处理程序
 # 只在非单词字符（空格或 CJK 字符）处断行
 # 其他字符会先存在 current word 中，直到遇到非单词字符，再进行换行处理
 sub _handle_default_case {
