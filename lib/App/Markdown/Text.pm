@@ -329,17 +329,15 @@ sub _handle_wrap_forbidden_after {
   my $next_char_attr = $next_char_info->{type};
 
   # Define forbidden wrap characters for efficient lookup
-  my $forbidden_chars       = '\'",.!;:?])}';
+  my $forbidden_chars       = ',.!;:?])}';
   my $forbidden_chars_after = '\'"(';
   my %forbidden_chars       = map { $_ => 1 } split //, $forbidden_chars;
   my %forbidden_chars_after = map { $_ => 1 } split //, $forbidden_chars_after;
 
-  # Check if next character is forbidden to start a line
+  # Check if next character is forbidden to start a line or current character is forbidden to wrap after
   return
-       unless $char_attr eq "PUN_FORBIT_BREAK_AFTER"
-    || exists $forbidden_chars_after{$char}
-    || $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE"
-    || exists $forbidden_chars{$next_char};
+    unless ( $char_attr eq "PUN_FORBIT_BREAK_AFTER" || exists $forbidden_chars_after{$char} )
+    || ( $next_char_attr eq "PUN_FORBIT_BREAK_BEFORE" || exists $forbidden_chars{$next_char} );
 
   if ( $char_info->{width} == 0 || $char eq SPACE ) {
     $state->upload_word();
