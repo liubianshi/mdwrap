@@ -3,9 +3,9 @@ package App::Markdown::Inline;
 use strict;
 use warnings;
 use utf8;
-use Data::Dump      qw(dump);
-use Text::CharWidth qw(mbswidth mblen mbwidth);
-use List::Util      qw(any none);
+use Data::Dump           qw(dump);
+use Text::CharWidth      qw(mbswidth mblen mbwidth);
+use List::Util           qw(any none);
 use App::Markdown::Utils qw(_char_attr);
 
 use Exporter 'import';
@@ -98,6 +98,7 @@ my $syntax = {
       }
     };
   },
+
   '@' => sub {
     my $state = shift || return;
     my ( $str_ref, $pos, $char, $left_char, $left_char_attr ) = _format_arg($state);

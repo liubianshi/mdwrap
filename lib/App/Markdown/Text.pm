@@ -6,7 +6,7 @@ use Data::Dump qw(dump);
 use Exporter 'import';
 use utf8;
 use Text::CharWidth qw(mbswidth mblen mbwidth);
-use List::Util      qw(any none);
+use List::Util      qw(any max none);
 use open ':std', ':encoding(UTF-8)';
 use App::Markdown::Inline qw(get_syntax_meta);
 use App::Markdown::Utils  qw(_char_attr);
@@ -21,15 +21,45 @@ use constant {
   NEW_LINE             => "\n",    # 换行符
   ZERO_WIDTH_SPACE     => '​',     # 零宽空格
   SEPARATOR_SYMBOL     => "┄",     # 分隔线符号
-  SUPPORT_SHORTER_LINE => 10,      # 偏好短行
+  SUPPORT_SHORTER_LINE => 5,       # 偏好短行
   MAX_CONSECUTIVE_NL   => 1,       # 允许的最大连续换行数
 };
 
-my $REG_SENTENCE_END = qr/[,.:;?!]["')]?$/;
+my $REG_SENTENCE_END = qr/[,.:;?!][\"')]?$/;
 my $WRAP_SENTENCE    = 1;
-my $LINE_WIDTH       = DEFAULT_LINE_WIDTH;    # 当前行宽配置
+my $LINE_WIDTH       = DEFAULT_LINE_WIDTH;     # 当前行宽配置
 my $INLINE_SYNTAX    = get_syntax_meta();
 my $KEEP_ORIGIN_WRAP = 0;
+my $LANG             = "zh";                   # 默认语言
+
+# 语言特定的句子标记配置
+my %LANG_CONFIG = (
+  zh => {
+    sentence_end_regex  => qr/[,.:;?!][\"')]?$/,
+    sentence_end_chars  => [qw{ 。 ． ； ？ }],
+    sentence_separators => q/.。:：;；!！?？/,
+    other_separators    => q/,，、)）""」''/,
+    cjk_break_chars     => [qw{、 。 ） ， ． ： ； ？ ！ " 」}],
+  },
+  en => {
+    sentence_end_regex  => qr/[.;?!][\"')]?$/,
+    sentence_end_chars  => [],
+    sentence_separators => q/.;!?/,
+    other_separators    => q/,)""''/,
+    cjk_break_chars     => [],
+  },
+);
+
+# 预定义字符集合用于 support_shorter_line 函数
+my %SENTENCE_SEPARATOR = map { $_ => 1 } split //, q/.。:：;；!！?？/;
+my %OTHER_SEPARATOR    = map { $_ => 1 } split //, q/,，、)）""」''/;
+
+sub support_shorter_line {
+  my $char = shift // "";
+  return 4 * SUPPORT_SHORTER_LINE if exists $SENTENCE_SEPARATOR{$char};
+  return 2 * SUPPORT_SHORTER_LINE if exists $OTHER_SEPARATOR{$char};
+  return SUPPORT_SHORTER_LINE;
+}
 
 sub set_environemnt_variable {
   my $opt = shift;
@@ -48,8 +78,32 @@ sub set_environemnt_variable {
     $LINE_WIDTH = DEFAULT_LINE_WIDTH;
   }
 
+  # 设置语言选项
+  if ( defined $opt->{"lang"} ) {
+    if ( exists $LANG_CONFIG{ $opt->{"lang"} } ) {
+      $LANG = $opt->{"lang"};
+      _update_lang_specific_config();
+    }
+    else {
+      warn "Invalid lang value '$opt->{\"lang\"}', supported: zh, en. Using default: zh";
+      $LANG = "zh";
+    }
+  }
+
   $WRAP_SENTENCE    = $opt->{"wrap-sentence"}    if defined $opt->{"wrap-sentence"};
   $KEEP_ORIGIN_WRAP = $opt->{"keep-origin-wrap"} if defined $opt->{"keep-origin-wrap"};
+}
+
+# 根据当前语言更新语言相关配置
+sub _update_lang_specific_config {
+  my $config = $LANG_CONFIG{$LANG};
+
+  # 更新句子结束正则表达式
+  $REG_SENTENCE_END = $config->{sentence_end_regex};
+
+  # 更新字符集合
+  %SENTENCE_SEPARATOR = map { $_ => 1 } split //, $config->{sentence_separators};
+  %OTHER_SEPARATOR    = map { $_ => 1 } split //, $config->{other_separators};
 }
 
 sub wrap {
@@ -109,7 +163,9 @@ sub _process_characters {
     next unless $state->is_valid_char();
 
     # 按优先级执行处理程序
+    my $i = 0;
     for my $handler (@handlers) {
+      $i++;
       last if $handler->($state);
     }
   }
@@ -304,6 +360,9 @@ sub _handle_wrap_forbidden_before {
 
     # Append to previous line if current content is only whitespace
     $state->{lines}[-1] .= $char;
+
+    # Update previous_char to reflect the character we just added
+    $state->{previous_char} = $state->{current_char};
   }
   else {
     # Extend current word and upload it
@@ -319,7 +378,7 @@ sub _handle_wrap_forbidden_after {
   my ($state) = @_;
 
   # Early return if sentence wrapping is disabled
-  return unless $state->{wrap_sentence};
+  # return unless $state->{wrap_sentence};
 
   my $char_info      = $state->{current_char};
   my $next_char_info = $state->extract_next_char_info();
@@ -370,7 +429,22 @@ sub _handle_with_remaining_room {
 
   if ( $char_info->{char} eq SPACE ) {
     $state->upload_word();
-    my $sentence_end = ( not $wrap_sentence and $state->{current_sentence}{str} =~ m/$REG_SENTENCE_END/ );
+
+    # 检查是否为句子结束
+    my $sentence_end = 0;
+    if ( not $wrap_sentence and $state->{current_sentence}{str} =~ m/$REG_SENTENCE_END/ ) {
+      $sentence_end = 1;
+
+      # 特殊处理：如果句子以逗号结尾，检查后面是否为英文字母
+      # 例如："A," 后面是 "B"，不应该算作句子结束
+      if ( $state->{current_sentence}{str} =~ /,$/ ) {
+        my $next_char_info = $state->extract_next_char_info();
+        if ( $next_char_info->{char} =~ /^[a-zA-Z]$/ ) {
+          $sentence_end = 0;
+        }
+      }
+    }
+
     $state->line_extend() if $sentence_end;
     if ( ( $exceed_when_not_wrap >= 0 and ( $wrap_sentence or $sentence_end ) )
       or ( not $wrap_sentence and _sentence_end( $state->{current_line}{str} ) ) )
@@ -388,11 +462,72 @@ sub _handle_with_remaining_room {
     if ( $state->{wrap_sentence} ) {
       $state->push_line() if $exceed_when_not_wrap >= 0;
     }
-    elsif ( grep { $char eq $_ } qw{、 。 ） ， ． ： ； ？ } ) {
+    elsif ( grep { $char eq $_ } qw{ 。  ， ． ： ； ？ ！ " 」} ) {
       $state->line_extend();
       $state->push_line() if $exceed_when_not_wrap >= 0 or _sentence_end($char);
     }
+    elsif ( $char eq ',' ) {
+
+      # 英文逗号：检查后续字符是否为英文字母
+      # 如果是英文人名列表等，不应该在逗号后换行
+      my $next_char_info = $state->extract_next_char_info();
+      my $next_char      = $next_char_info->{char};
+
+      # 如果下一个字符是空格，再检查空格后的字符
+      if ( $next_char eq ' ' ) {
+        my $pos_backup = $state->{pos};
+        $state->{pos}++;
+        my $char_after_space = $state->extract_next_char_info();
+        $state->{pos} = $pos_backup;
+
+        # 如果空格后是英文字母，不强制换行
+        if ( $char_after_space->{type} eq 'OTHER' && $char_after_space->{char} =~ /^[a-zA-Z]$/ ) {
+
+          # 不在这里换行，让后续逻辑处理
+        }
+        else {
+          $state->line_extend();
+          $state->push_line() if $exceed_when_not_wrap >= 0;
+        }
+      }
+
+      # 如果紧跟英文字母，不强制换行
+      elsif ( $next_char =~ /^[a-zA-Z]$/ ) {
+
+        # 不在这里换行
+      }
+      else {
+        $state->line_extend();
+        $state->push_line() if $exceed_when_not_wrap >= 0;
+      }
+    }
     return 1;
+  }
+
+  # 特殊处理：英文逗号后跟英文字母的情况（如人名列表）
+  # 例如："Corrado, Hulten" 不应该在逗号后换行
+  if ( $char_info->{char} eq ',' && $char_info->{type} eq 'OTHER' ) {
+    my $next_char_info = $state->extract_next_char_info();
+    my $next_char      = $next_char_info->{char};
+
+    # 检查逗号后是否为空格+英文字母
+    my $should_keep_together = 0;
+    if ( $next_char eq ' ' ) {
+      my $pos_backup = $state->{pos};
+      $state->{pos}++;
+      my $char_after_space = $state->extract_next_char_info();
+      $state->{pos} = $pos_backup;
+      if ( $char_after_space->{type} eq 'OTHER' && $char_after_space->{char} =~ /^[a-zA-Z]$/ ) {
+        $should_keep_together = 1;
+      }
+    }
+
+    if ($should_keep_together) {
+
+      # 逗号应该和后续内容保持在一起，不换行
+      $state->word_extend();
+      return 1;
+    }
   }
 
   $state->word_extend();
@@ -454,7 +589,36 @@ sub _handle_character_space {
 
   # 否则，只能在句子末尾断行，或到
   $state->upload_word();
+
+  # 检查是否为真正的句子结束
+  my $is_sentence_end = 0;
   if ( $state->{current_sentence}{str} =~ m/$REG_SENTENCE_END/ or $char eq "" ) {
+    $is_sentence_end = 1;
+
+    # 特殊处理：如果以逗号结尾，检查后续是否为英文字母
+    # 例如："Corrado, Hulten" 不应该在逗号后换行
+    if ( $state->{current_sentence}{str} =~ /,$/ ) {
+      my $next_char_info = $state->extract_next_char_info();
+
+      # 如果下一个是空格+英文字母，或直接是英文字母，不算句子结束
+      if ( $next_char_info->{char} =~ /^[a-zA-Z]$/ ) {
+        $is_sentence_end = 0;
+      }
+      elsif ( $next_char_info->{char} eq ' ' ) {
+
+        # 检查空格后的字符
+        my $pos_backup = $state->{pos};
+        $state->{pos}++;
+        my $char_after_space = $state->extract_next_char_info();
+        $state->{pos} = $pos_backup;
+        if ( $char_after_space->{char} =~ /^[a-zA-Z]$/ ) {
+          $is_sentence_end = 0;
+        }
+      }
+    }
+  }
+
+  if ($is_sentence_end) {
     if ( $line->{str} eq "" ) {
       $state->line_extend();
       $state->push_line();
@@ -489,7 +653,8 @@ sub _handle_character_cjk {
   # 仅处理CJK字符和中文标点
   return if $char_info->{type} ne "CJK" and $char_info->{type} !~ 'PUN';
 
-  if ( not $state->{wrap_sentence} and none { $char eq $_ } qw{、 。 ） ， ． ： ； ？ } ) {
+  if ( not $state->{wrap_sentence} and none { $char eq $_ } qw{、 。 ） ， ． ： ； ？ " } ) {
+
     $state->upload_non_word_character();
     return 1;
   }
@@ -566,46 +731,67 @@ sub wrap_line {
 }
 
 sub cal_remaining_space {
-  my ( $origin, $new, $line_width ) = @_;
+  my ( $current_len, $new_len, $char, $line_width ) = @_;
+  $char       //= "";
   $line_width //= $LINE_WIDTH;
-  my $exceed_space      = $new - $line_width;
-  my $origin_remainning = $line_width - $origin - SUPPORT_SHORTER_LINE;
-  my $remaining_space   = ( $origin_remainning > 0 ? $origin_remainning : 0 ) - $exceed_space;
-  return $remaining_space, $exceed_space;
+
+  # 计算基础指标
+  my $exceed_space    = $new_len - $line_width;        # 超出的空间（负值表示未超出）
+  my $available_width = $line_width - $current_len;    # 当前行可用空间
+
+  # 根据字符类型调整偏好宽度
+  # 某些字符（如句号、逗号）偏好在更短的位置结束行，提前换行
+  my $char_preference = support_shorter_line($char);
+  my $preferred_width = $available_width - $char_preference;
+
+  # 计算最终剩余空间
+  # = 偏好宽度（至少为0） - 已超出的空间
+  my $remaining_space = max( 0, $preferred_width ) - $exceed_space;
+
+  return ( $remaining_space, $exceed_space );
 }
 
 sub remaining_space {
-  my ($state)  = @_;
+  my ($state) = @_;
+
+  # 提取状态信息
   my $line     = $state->{current_line};
   my $sentence = $state->{current_sentence};
   my $word     = $state->{current_word};
   my $char     = $state->{current_char};
 
-  # 计算总显示长度（当前行 + 当前词 + 下个字符）
-  my $total_visible_length = $line->{len} + $sentence->{len} + $word->{len} + $char->{width};
+  # 计算添加当前字符后的总显示长度
+  my $total_len = $line->{len} + $sentence->{len} + $word->{len} + $char->{width};
 
   # 基础剩余空间计算
-  my ( $remaining, $exceed ) = cal_remaining_space( $line->{len}, $total_visible_length );
+  my ( $remaining, $exceed ) = cal_remaining_space( $line->{len}, $total_len, $char->{str} );
 
-  # 处理长单词溢出情况
+  # 处理长单词溢出情况：
+  # 当剩余空间很小时，重新计算实际的可见长度
+  # 这是因为某些格式化可能导致实际长度与预期不符
   if ( $remaining <= 10 ) {
-    my $newline = { str => $line->{str}, len => $line->{len} };
-
-    my $string_extend = App::Markdown::Text::State->can("_string_extend");
-    $string_extend->( $newline, $sentence );
-    $string_extend->( $newline, $word );
-    $string_extend->( $newline, { str => $char->{char}, len => $char->{width} } );
-
-    $total_visible_length = $newline->{len};
-    ( $remaining, $exceed ) = cal_remaining_space( $line->{len}, $total_visible_length );
+    $total_len = _calculate_actual_visible_length( $state, $line, $sentence, $word, $char );
+    ( $remaining, $exceed ) = cal_remaining_space( $line->{len}, $total_len, $char->{str} );
   }
 
-  if (wantarray) {
-    return $remaining, $exceed;
-  }
-  else {
-    return $remaining;
-  }
+  # 根据调用上下文返回不同的值
+  return wantarray ? ( $remaining, $exceed ) : $remaining;
+}
+
+# 辅助函数：计算实际的可见长度
+sub _calculate_actual_visible_length {
+  my ( $state, $line, $sentence, $word, $char ) = @_;
+
+  # 创建临时行对象来模拟合并后的实际长度
+  my $temp_line = { str => $line->{str}, len => $line->{len} };
+
+  # 获取字符串扩展方法并依次应用
+  my $string_extend = App::Markdown::Text::State->can("_string_extend");
+  $string_extend->( $temp_line, $sentence );
+  $string_extend->( $temp_line, $word );
+  $string_extend->( $temp_line, { str => $char->{char}, len => $char->{width} } );
+
+  return $temp_line->{len};
 }
 
 # 换行符的处理：是当成空格处理，还是直接忽略
@@ -613,7 +799,14 @@ sub update_when_new_line {
   my ($state)   = @_;
   my $char_info = $state->{current_char};
   my $string    = ${ $state->{original_text} };
-  my $last_char = substr( $state->{current_line}{str} . $state->{current_word}{str}, -1 );
+  my $last_char;
+  if ( $state->{wrap_sentence} ) {
+    $last_char = substr( $state->{current_line}{str} . $state->{current_word}{str}, -1 );
+  }
+  else {
+    $last_char =
+      substr( $state->{current_line}{str} . $state->{current_sentence}{str} . $state->{current_word}{str}, -1 );
+  }
 
   # 换行符后面的字符串以空格开头，可以直接删除
   if ( substr( $string, $state->{pos} ) =~ m/\A(\s+)/ ) {
@@ -627,7 +820,7 @@ sub update_when_new_line {
   # there is no need to add an extra space when merging lines.
   if (  $next_char_info->{width} > 1
     and $next_char_info->{type} ne "OTHER"
-    and $last_char eq "" || $last_char eq SPACE || _char_attr( ord $last_char ) ne "OTHER" )
+    and ( $last_char eq "" || $last_char eq SPACE || _char_attr( ord $last_char ) ne "OTHER" ) )
   {
     return "";    # 直接忽略这个换行符
   }
@@ -677,8 +870,18 @@ sub _generate_output {
 }
 
 sub _sentence_end {
-  my $str = shift or return;
-  return ( any { $str eq $_ } qw{ 。 ． ； ？ } or $str =~ m/[.;?!]["')]?$/ );
+  my $str    = shift or return;
+  my $config = $LANG_CONFIG{$LANG};
+
+  # 检查是否匹配语言特定的句子结束字符
+  if ( @{ $config->{sentence_end_chars} } ) {
+    return 1 if any { $str eq $_ } @{ $config->{sentence_end_chars} };
+  }
+
+  # 检查是否匹配句子结束正则表达式
+  return 1 if $str =~ $config->{sentence_end_regex};
+
+  return 0;
 }
 
 # 当前是否允许折行

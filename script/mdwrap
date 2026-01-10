@@ -7,14 +7,15 @@ use App::Markdown::Wrap;
 use open ':std', ':encoding(UTF-8)';
 
 my %default_opts = (
-  "line-width" => 80,
-  "tonewsboat" => 0,
-  "wrap-sentence" => 1,
+  "line-width"       => 80,
+  "tonewsboat"       => 0,
+  "wrap-sentence"    => 0,
   "keep-origin-wrap" => 0,
+  "lang"             => "zh",
 );
 
 my %opts;
-GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap-sentence!", "keep-origin-wrap");
+GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap-sentence", "keep-origin-wrap", "lang=s" );
 
 App::Markdown::Wrap->run( { %default_opts, %opts }, @ARGV );
 
