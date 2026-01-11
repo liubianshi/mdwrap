@@ -21,7 +21,7 @@ use constant {
   NEW_LINE             => "\n",    # 换行符
   ZERO_WIDTH_SPACE     => '​',     # 零宽空格
   SEPARATOR_SYMBOL     => "┄",     # 分隔线符号
-  SUPPORT_SHORTER_LINE => 15,      # 偏好短行
+  SUPPORT_SHORTER_LINE => 20,      # 偏好短行
   MAX_CONSECUTIVE_NL   => 1,       # 允许的最大连续换行数
 };
 
@@ -31,29 +31,17 @@ my $INLINE_SYNTAX    = get_syntax_meta();
 my $KEEP_ORIGIN_WRAP = 0;
 my $LANG             = "zh";                  # 默认语言
 
-# 语言特定的句子标记配置
-# Hash defining sentence-ending characters for different languages
-# zh: Chinese sentence endings
-# en: English sentence endings
-my %CHAR_SENTENCE_END = (
-  zh => "。：．；！？",
-  en => ".:;!?"
-);
-
 # Pre-compute combined sentence endings to avoid repeated concatenation
-my $ZH_ALL_ENDS = $CHAR_SENTENCE_END{zh} . $CHAR_SENTENCE_END{en};
 my %LANG_CONFIG = (
   zh => {
-    sentence_end_regex  => qr/[，。：．；！？,.:!?]["')」）”’]?$/,
-    sentence_separators => $ZH_ALL_ENDS,
+    sentence_end_regex  => qr/[，。：．；！？,.;:!?]["')」）”’]?$/,
+    sentence_separators => q(。：．；！？),
     other_separators    => q(，、）」",),
-    cjk_break_chars     => [ split //, qq(，、）」"$CHAR_SENTENCE_END{zh}) ],
   },
   en => {
     sentence_end_regex  => qr/[.;?!]["')]?$/,
     sentence_separators => q{.;!?},
     other_separators    => q{,)"'},
-    cjk_break_chars     => [],
   },
 );
 
@@ -62,7 +50,7 @@ my %OTHER_SEPARATOR    = ();
 
 sub support_shorter_line {
   my $char = shift // "";
-  return min( 4 * SUPPORT_SHORTER_LINE, $LINE_WIDTH - 20 ) if exists $SENTENCE_SEPARATOR{$char};
+  return min( 3 * SUPPORT_SHORTER_LINE, $LINE_WIDTH - 20 ) if exists $SENTENCE_SEPARATOR{$char};
   return min( 2 * SUPPORT_SHORTER_LINE, $LINE_WIDTH - 20 ) if exists $OTHER_SEPARATOR{$char};
   return min( SUPPORT_SHORTER_LINE,     $LINE_WIDTH - 20 );
 }
@@ -323,7 +311,11 @@ sub _handle_other_newline {
   }
 
   my $sub_char = update_when_new_line($state);
-  return ( $sub_char eq "" );
+  return if $sub_char eq SPACE;
+
+  my ( $remaining_space, $exceed_when_not_wrap ) = remaining_space($state);
+  $state->push_line() if $remaining_space <= 0;
+  return 1;
 }
 
 # line wrap are not allowed before the current letter
@@ -492,6 +484,7 @@ sub _handle_line_end_with_space {
   }
   return if $trail_space_number == 0;
 
+  $state->word_extend();
   if ( $trail_space_number == 1 ) {
     $line->{str} = substr( $line->{str}, 0, -1 );
     $line->{len} -= 1;
@@ -502,7 +495,6 @@ sub _handle_line_end_with_space {
     $line->{len} -= ( $trail_space_number - 1 );
   }
 
-  $state->word_extend();
   return 1;
 }
 
@@ -517,6 +509,11 @@ sub _handle_character_space {
   return if $char =~ /\S/;
 
   my $line = $state->{current_line};
+  if ( $char eq "" ) {
+    $state->push_line();
+    $state->push_line() if $line->{str} ne "";
+    return 1;
+  }
 
   # 可以在句子内部折行时，在空格处断行
   if ( $state->{wrap_sentence} ) {
@@ -527,23 +524,15 @@ sub _handle_character_space {
     }
     $state->push_line();
     $state->word_extend();
-    if ( $state->{current_word}{str} =~ s/^(\s+)// ) {
-      $state->{current_word}{len} -= length($1);
-    }
     $state->upload_word() if $state->{current_word}{str} ne "";
     return 1;
   }
 
-  $state->push_line() if $line->{str} ne "";
-
-  # 否则，只能在句子末尾断行，或到
   $state->upload_word();
+  $state->push_line() if $line->{str} ne "";
 
   # 检查是否为真正的句子结束
   if ( _sentence_end( $state->{current_sentence}{str} ) ) {
-    if ( $state->{current_sentence}{str} =~ s/^(\s+)// ) {
-      $state->{current_sentence}{len} -= length($1);
-    }
     $state->line_extend();
     return 1;
   }
@@ -567,24 +556,14 @@ sub _handle_character_cjk {
   return if $char_info->{type} ne "CJK" and $char_info->{type} !~ 'PUN';
 
   if ( $state->{wrap_sentence} ) {
-    $state->push_line() if $state->{current_line}{str} ne "";    # 创建新行并应用other前缀
-    if ( $state->{current_word}{str} =~ s/^(\s+)// ) {
-      $state->{current_word}{len} -= length($1);
-    }
     $state->upload_non_word_character();
+    $state->push_line() if $state->{current_line}{str} ne "";    # 创建新行并应用other前缀
     return 1;
   }
 
-  if ( _sentence_end( $line->{str} ) ) {
-    $state->push_line();
-    if ( $state->{current_sentence}{str} =~ s/^(\s+)// ) {
-      $state->{current_sentence}{len} -= length($1);
-    }
-  }
   $state->upload_non_word_character();
-  if ( _sentence_end( $state->{current_sentence}{str} ) ) {
-    $state->line_extend();
-  }
+  $state->push_line()   if _sentence_end( $line->{str} );
+  $state->line_extend() if _sentence_end( $state->{current_sentence}{str} );
 
   return 1;
 }
@@ -594,19 +573,8 @@ sub _handle_character_cjk {
 # 其他字符会先存在 current word 中，直到遇到非单词字符，再进行换行处理
 sub _handle_default_case {
   my $state = shift;
-  $state->push_line();    # 创建新行并应用other前缀
-
-  if ( $state->{wrap_sentence} ) {
-    if ( $state->{current_word}{str} =~ s/^(\s+)// ) {
-      $state->{current_word}{len} -= length($1);
-    }
-  }
-  else {
-    if ( $state->{current_sentence}{str} =~ s/^(\s+)// ) {
-      $state->{current_sentence}{len} -= length($1);
-    }
-  }
   $state->word_extend();
+  $state->push_line();    # 创建新行并应用other前缀
   return 1;
 }
 
@@ -701,17 +669,15 @@ sub _calculate_actual_visible_length {
 
 # 换行符的处理：是当成空格处理，还是直接忽略
 sub update_when_new_line {
-  my ($state)   = @_;
-  my $char_info = $state->{current_char};
-  my $string    = ${ $state->{original_text} };
-  my $last_char;
-  if ( $state->{wrap_sentence} ) {
-    $last_char = substr( $state->{current_line}{str} . $state->{current_word}{str}, -1 );
-  }
-  else {
-    $last_char =
-      substr( $state->{current_line}{str} . $state->{current_sentence}{str} . $state->{current_word}{str}, -1 );
-  }
+  my ($state)            = @_;
+  my $char_info          = $state->{current_char};
+  my $string             = ${ $state->{original_text} };
+  my $string_before_char = join( '',
+    $state->{current_line}{str}     // '',
+    $state->{current_sentence}{str} // '',
+    $state->{current_word}{str}     // '' );
+  my $last_char      = substr( $string_before_char, -1 );
+  my $last_cahr_attr = _char_attr( ord $last_char );
 
   # 换行符后面的字符串以空格开头，可以直接删除
   if ( substr( $string, $state->{pos} ) =~ m/\A(\s+)/ ) {
@@ -725,9 +691,12 @@ sub update_when_new_line {
   # there is no need to add an extra space when merging lines.
   if (  $next_char_info->{width} > 1
     and $next_char_info->{type} ne "OTHER"
-    and ( $last_char eq "" || $last_char eq SPACE || _char_attr( ord $last_char ) ne "OTHER" ) )
+    and ( $last_char eq "" || $last_char eq SPACE || $last_cahr_attr ne "OTHER" ) )
   {
     return "";    # 直接忽略这个换行符
+  }
+  elsif ( $last_cahr_attr =~ /PUN/ ) {
+    return "";
   }
   else {
     $char_info->{char}  = SPACE;
@@ -781,7 +750,10 @@ sub _sentence_end {
   # return 0 if substr( $str, -1 ) eq ",";
 
   # 检查最后两个字符是否包含ASCII可见字符（半角字符：字母、数字、标点符号）
-  return 0 if substr( $str, -1 ) =~ /\p{ASCII}/ and $str !~ /^\p{ASCII}+$/;
+  if ( substr( $str, -1 ) =~ /\p{ASCII}/ ) {
+    return 0 if length($str) < 30;
+    return 0 if substr( $str, 30 ) !~ /^\p{ASCII}+$/;
+  }
 
   # 检查是否匹配句子结束正则表达式
   return $str =~ qr/$config->{sentence_end_regex}/ ? 1 : 0;

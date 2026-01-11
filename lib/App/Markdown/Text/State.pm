@@ -8,27 +8,27 @@ use Text::CharWidth      qw(mbswidth mblen mbwidth);
 
 sub new {
   my $class = shift;
-  my $args = shift;
+  my $args  = shift;
   $args = {
     prefix_first => "",
     prefix_other => "",
-    content => \(""),
+    content      => \(""),
     %{$args}
   };
 
   my $self = {
     lines             => [],
     original_text     => $args->{content},
-    text_length       => length(${$args->{content}}),
+    text_length       => length( ${ $args->{content} } ),
     pos               => 0,
-    current_line      => _string_init($args->{prefix_first}),
+    current_line      => _string_init( $args->{prefix_first} ),
     current_word      => _string_init(),
     current_sentence  => _string_init(),
     current_char      => _char_init(),
     previous_char     => _char_init(),
     wrap_sentence     => $args->{wrap_sentence},
     keep_origin_wrap  => $args->{keep_origin_wrap},
-    inline_syntax_end => {},                 # 新增语法结束标记栈
+    inline_syntax_end => {},                                                                   # 新增语法结束标记栈
     prefix            => { first => $args->{prefix_first}, other => $args->{prefix_other} },
   };
 
@@ -71,7 +71,7 @@ sub init {
   my $self  = shift;
   my $key   = shift;
   my $value = shift // ( $key eq "current_line" ? $self->{prefix}{other} : "" );
-  $self->{$key} = _string_init($value)
+  $self->{$key} = _string_init($value);
 }
 
 sub update {
@@ -98,7 +98,7 @@ sub is_valid_char {
 sub next {
   my $self = shift;
   $self->{previous_char} = $self->{current_char};
-  $self->{current_char} = $self->extract_next_char_info();
+  $self->{current_char}  = $self->extract_next_char_info();
   $self->{pos} += 1;
   return $self->{current_char};
 }
@@ -107,6 +107,16 @@ sub push_line {
   my $self = shift;
   push @{ $self->{lines} }, $self->{current_line}{str} if $self->{current_line} > 0;
   $self->init("current_line");
+  if ( $self->{wrap_sentence} ) {
+    if ( $self->{current_word}{str} =~ s/^(\s+)// ) {
+      $self->{current_word}{len} -= length($1);
+    }
+  }
+  else {
+    if ( $self->{current_sentence}{str} =~ s/^(\s+)// ) {
+      $self->{current_sentence}{len} -= length($1);
+    }
+  }
   return $self;
 }
 
@@ -119,30 +129,30 @@ sub word_extend {
 }
 
 sub sentence_extend {
-  my $self      = shift;
-  my $opt       = shift || {};
-  my $sentence  = $self->{current_sentence};
-  my $word      = $self->{current_word};
-  _string_extend($sentence, $word, $opt);
+  my $self     = shift;
+  my $opt      = shift || {};
+  my $sentence = $self->{current_sentence};
+  my $word     = $self->{current_word};
+  _string_extend( $sentence, $word, $opt );
   $self->init("current_word");
   return $self;
 }
 
 sub line_extend {
-  my $self      = shift;
-  my $opt       = shift || {};
-  my $line      = $self->{current_line};
-  my $source    = $self->{wrap_sentence} ? "current_word" : "current_sentence";
-  my $new       = $self->{$source};
+  my $self   = shift;
+  my $opt    = shift || {};
+  my $line   = $self->{current_line};
+  my $source = $self->{wrap_sentence} ? "current_word" : "current_sentence";
+  my $new    = $self->{$source};
 
-  _string_extend($line, $new, $opt);
+  _string_extend( $line, $new, $opt );
   $self->init($source);
   return $self;
 }
 
 sub upload_word {
   my $self = shift;
-  if ($self->{wrap_sentence}) {
+  if ( $self->{wrap_sentence} ) {
     $self->line_extend();
   }
   else {
@@ -170,21 +180,21 @@ sub _string_init {
 }
 
 sub _string_extend {
-  my ($left, $right, $opt) = @_;
-  return if
-    not defined $left
+  my ( $left, $right, $opt ) = @_;
+  return
+       if not defined $left
     or not defined $right
     or not defined $left->{str}
     or not defined $left->{len}
     or not defined $right->{str}
     or not defined $right->{len};
 
-  if ((defined $opt and defined $opt->{noprocess})
-      or $left->{str} eq "")
+  if ( ( defined $opt and defined $opt->{noprocess} )
+    or $left->{str} eq "" )
   {
     $left->{str} .= $right->{str};
     $left->{len} += $right->{len};
-    return
+    return;
   }
 
   my @no_extra_space_after  = ( q( ), qw( $ * _ =   [ / ~) );
