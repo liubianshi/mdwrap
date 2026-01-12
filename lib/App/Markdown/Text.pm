@@ -21,7 +21,7 @@ use constant {
   NEW_LINE             => "\n",    # 换行符
   ZERO_WIDTH_SPACE     => '​',     # 零宽空格
   SEPARATOR_SYMBOL     => "┄",     # 分隔线符号
-  SUPPORT_SHORTER_LINE => 20,      # 偏好短行
+  SUPPORT_SHORTER_LINE => 6,       # 偏好短行
   MAX_CONSECUTIVE_NL   => 1,       # 允许的最大连续换行数
 };
 
@@ -34,12 +34,12 @@ my $LANG             = "zh";                  # 默认语言
 # Pre-compute combined sentence endings to avoid repeated concatenation
 my %LANG_CONFIG = (
   zh => {
-    sentence_end_regex  => qr/[，。：．；！？,.;:!?]["')」）”’]?$/,
+    sentence_end_regex  => qr/[），。：．；！？,.;:!?]["')」）”’]?$/,
     sentence_separators => q(。：．；！？),
-    other_separators    => q(，、）」",),
+    other_separators    => q(，),
   },
   en => {
-    sentence_end_regex  => qr/[.;?!]["')]?$/,
+    sentence_end_regex  => qr/[").;?!]["')]?$/,
     sentence_separators => q{.;!?},
     other_separators    => q{,)"'},
   },
@@ -50,9 +50,9 @@ my %OTHER_SEPARATOR    = ();
 
 sub support_shorter_line {
   my $char = shift // "";
-  return min( 3 * SUPPORT_SHORTER_LINE, $LINE_WIDTH - 20 ) if exists $SENTENCE_SEPARATOR{$char};
-  return min( 2 * SUPPORT_SHORTER_LINE, $LINE_WIDTH - 20 ) if exists $OTHER_SEPARATOR{$char};
-  return min( SUPPORT_SHORTER_LINE,     $LINE_WIDTH - 20 );
+  return min( 10 * SUPPORT_SHORTER_LINE, $LINE_WIDTH - 20 ) if exists $SENTENCE_SEPARATOR{$char};
+  return min( 2 * SUPPORT_SHORTER_LINE,  $LINE_WIDTH - 20 ) if exists $OTHER_SEPARATOR{$char};
+  return min( SUPPORT_SHORTER_LINE,      $LINE_WIDTH - 20 );
 }
 
 sub set_environemnt_variable {
