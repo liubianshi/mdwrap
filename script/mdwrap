@@ -15,7 +15,22 @@ my %default_opts = (
 );
 
 my %opts;
-GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap-sentence", "keep-origin-wrap", "lang=s" );
+GetOptions( \%opts, "line-width|w=i", "tonewsboat", "wrap-sentence", "keep-origin-wrap", "lang=s", "help|h" );
+
+if ( $opts{help} ) {
+  print <<'EOF';
+Usage: mdwrap [options] [file]
+
+Options:
+  -w, --line-width <n>     Set line width (default: 80)
+      --tonewsboat         Format for newsboat
+      --wrap-sentence      Wrap by sentence
+      --keep-origin-wrap   Keep original wrapping
+      --lang <lang>        Language (default: zh)
+  -h, --help               Show this help message
+EOF
+  exit 0;
+}
 
 App::Markdown::Wrap->run( { %default_opts, %opts }, @ARGV );
 
